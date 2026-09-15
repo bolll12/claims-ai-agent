@@ -1,0 +1,97 @@
+# LangChain 0.3 系列与本地 OpenAI 兼容推理接口
+langchain==0.3.14
+langchain-core==0.3.29
+langchain-community==0.3.14
+langchain-text-splitters==0.3.5
+langchain-openai==0.2.14
+openai==1.59.7
+tiktoken==0.8.0
+langsmith==0.2.10
+
+# Agent 流程编排与检查点
+langgraph==0.2.62
+langgraph-checkpoint==2.0.9
+langgraph-sdk==0.1.51
+
+# Milvus 向量检索客户端
+langchain-milvus==0.1.7
+pymilvus==2.4.10
+numpy==1.26.4
+setuptools==75.6.0
+
+# 数据契约与配置
+pydantic==2.10.5
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+PyYAML==6.0.2
+
+# HTTP API 与服务运行
+fastapi==0.115.6
+starlette==0.41.3
+uvicorn==0.34.0
+httpx==0.28.1
+python-multipart==0.0.20
+
+# 模板与持久化
+Jinja2==3.1.6
+SQLAlchemy==2.0.37
+marshmallow==3.23.2
+
+# 测试与覆盖率
+pytest==8.3.4
+pytest-asyncio==0.25.2
+pytest-cov==6.0.0
+
+# 传递依赖完整锁定（Python 3.10 / macOS ARM64 解析基线）
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+annotated-types==0.8.0
+anyio==4.15.1
+async-timeout==4.0.3
+attrs==26.1.0
+certifi==2026.7.22
+charset-normalizer==3.5.1
+click==8.5.0
+coverage==7.16.1
+dataclasses-json==0.6.7
+distro==1.9.0
+exceptiongroup==1.3.1
+frozenlist==1.8.0
+grpcio==1.67.1
+h11==0.16.0
+httpcore==1.0.9
+httpx-sse==0.4.3
+idna==3.19
+iniconfig==2.3.0
+jiter==0.17.0
+jsonpatch==1.33
+jsonpointer==3.1.1
+markupsafe==3.0.3
+milvus-lite==2.4.12
+msgpack==1.2.2
+multidict==6.8.0
+mypy-extensions==1.1.0
+orjson==3.12.0
+packaging==24.2
+pandas==2.3.3
+pluggy==1.6.0
+propcache==0.5.2
+protobuf==5.29.3
+pydantic-core==2.27.2
+python-dateutil==2.9.0.post0
+pytz==2026.3.post1
+regex==2026.9.10
+requests-toolbelt==1.0.0
+requests==2.34.2
+six==1.17.0
+sniffio==1.3.1
+tenacity==9.1.4
+tomli==2.4.1
+tqdm==4.70.1
+typing-extensions==4.16.0
+typing-inspect==0.9.0
+tzdata==2026.4
+ujson==6.0.0
+urllib3==2.7.0
+yarl==1.24.5
