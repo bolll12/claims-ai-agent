@@ -5,18 +5,36 @@
 ## 模块落点
 
 ```text
-agents/             # 理赔 Agent 与状态机
-tools/              # 业务工具
-prompts/            # 提示词与模板
-models/schemas.py   # 请求与响应契约
-tests/              # 接口冒烟测试
-config.py           # 本地 ChatOpenAI 模型工厂
-app.py              # FastAPI 入口
-requirements.txt    # 精确锁定直接及传递依赖
-scripts/            # venv 搭建及真实 HTTP 验证
+claims-agent-app/
+├── app.py                  # 主入口（FastAPI）
+├── config.py               # 配置、模型初始化与任务参数路由
+├── requirements.txt        # 精确锁定直接及传递依赖
+├── .env.example            # 环境变量模板
+├── agents/                 # 理赔、风控 Agent 与置信度
+│   ├── __init__.py         # Python 包声明
+│   ├── claim_agent.py      # 理赔 Agent（LangGraph 状态机落点）
+│   ├── risk_agent.py       # 风控 Agent 落点
+│   └── confidence.py       # 置信度子系统落点
+├── tools/                  # 保单、理算、医保工具与共享调用能力
+│   ├── __init__.py         # Python 包声明
+│   └── llm_calls.py        # 同步、流式和结构化模型调用
+├── prompts/                # 审核、风控 Prompt
+│   └── __init__.py         # Python 包声明
+├── models/                 # Pydantic 契约
+│   ├── __init__.py         # Python 包声明
+│   └── schemas.py          # 请求与响应契约
+├── tests/                  # 单元与集成测试
+│   ├── __init__.py         # Python 包声明
+│   ├── test_smoke.py       # HTTP 接口冒烟测试
+│   └── test_llm_parameters.py # 模型请求参数验证
+├── scripts/                # venv 搭建及服务验证脚本
+└── README.md               # 启动与开发说明
 ```
 
 五个 Python 包均包含 `__init__.py`。
+
+三个 Agent 模块当前预留职责，尚未实现状态机、风控及置信度算法。
+模型调用统一从 `tools.llm_calls` 导入，任务模型从 `config.get_model` 获取。
 
 ## 搭建与验证
 
