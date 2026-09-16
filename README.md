@@ -81,6 +81,8 @@ curl -fsS http://127.0.0.1:8001/health
 python health_check.py
 ```
 
+启动后访问 `http://127.0.0.1:8001/` 使用理赔智能工作台。页面支持案件提交、PDF/DOCX/文本抽取、图片视觉识别，以及结合识别结果的流式理赔问答。附件仅在请求内存中处理，不落盘；图片识别要求配置的模型支持 OpenAI 兼容多模态消息。
+
 也可先停止8001端口的现有本项目服务，再运行`bash scripts/verify.sh`完成启动与pytest两条验证链路。
 
 | 路由 | 行为 |
@@ -92,6 +94,9 @@ python health_check.py
 | POST /api/claims/{claim_id}/review | X-Reviewer-Key认证后恢复人工审核 |
 | GET /metrics | Prometheus格式指标 |
 | GET /docs | 自动生成的接口文档 |
+| GET / | 理赔智能工作台 |
+| POST /api/documents/analyze | 内存解析并识别最多6份理赔单证 |
+| POST /api/assistant/stream | 结合案件和单证上下文流式问答 |
 
 请求支持description或claim_text，以及可选policy_id、amount。返回的是审核建议，不执行支付。SQLite检查点保存在`.data/checkpoints.sqlite`，重启可恢复。拒赔需授权人工提供条款依据；低置信度、证据不足和大额转人工。生产必须配置CLAIMS_API_KEY和REVIEWER_API_KEY；示例不支持多租户行级权限，也不能直接横向扩容。
 

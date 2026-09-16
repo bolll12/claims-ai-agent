@@ -1,0 +1,47 @@
+"""理赔工作台的单证识别与问答契约。"""
+
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+FieldName = Annotated[str, Field(min_length=1, max_length=50)]
+FieldValue = Annotated[str, Field(max_length=300)]
+WarningText = Annotated[str, Field(min_length=1, max_length=500)]
+
+
+class DocumentAnalysis(BaseModel):
+    """单份附件的结构化识别结果。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    document_id: str = Field(min_length=1, max_length=64)
+    file_name: str = Field(min_length=1, max_length=255)
+    document_type: str = Field(min_length=1, max_length=100)
+    summary: str = Field(min_length=1, max_length=2000)
+    fields: dict[FieldName, FieldValue] = Field(default_factory=dict, max_length=20)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    warnings: list[WarningText] = Field(default_factory=list, max_length=10)
+
+
+class DocumentBatchResponse(BaseModel):
+    """批量附件识别响应。"""
+
+    documents: list[DocumentAnalysis]
+
+
+class ChatTurn(BaseModel):
+    """浏览器传回的有限对话历史。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class AssistantRequest(BaseModel):
+    """基于案件和已识别单证的问答请求。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    question: str = Field(min_length=1, max_length=4000)
+    claim_id: str | None = Field(default=None, max_length=64)
+    documents: list[DocumentAnalysis] = Field(default_factory=list, max_length=6)
+    history: list[ChatTurn] = Field(default_factory=list, max_length=12)
