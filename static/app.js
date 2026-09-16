@@ -37,7 +37,7 @@ function escapeHtml(value) {
 }
 
 function scrollToBottom() {
-  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+  $("chatMessages").scrollTo({ top: $("chatMessages").scrollHeight, behavior: "smooth" });
 }
 
 function fileCards(files) {
@@ -114,6 +114,7 @@ async function streamAnswer(question, newDocuments, article) {
   const decoder = new TextDecoder();
   let buffer = "";
   let detectedIntent = null;
+  let completed = false;
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -124,6 +125,8 @@ async function streamAnswer(question, newDocuments, article) {
       const line = event.split("\n").find((item) => item.startsWith("data: "));
       if (!line) continue;
       const data = JSON.parse(line.slice(6));
+      if (data.trace) updateTrace(data.trace);
+      if (data.done) { completed = true; traceNode("output", "done", "回答已完成"); $("traceStatus").textContent = "执行完成"; }
       if (data.error) throw new Error(data.error);
       if (data.intent) {
         detectedIntent = data.intent;
@@ -134,6 +137,7 @@ async function streamAnswer(question, newDocuments, article) {
     }
     scrollToBottom();
   }
+  if (!completed) throw new Error("连接中断，回答未完成，请重试。");
   if (!answer.textContent) answer.textContent = "模型未返回有效内容，请稍后重试。";
   renderDocumentDetails(article.querySelector(".document-details"), newDocuments);
   state.history.push(
@@ -148,20 +152,36 @@ async function sendMessage(rawQuestion) {
   const question = rawQuestion.trim() || (files.length ? "请识别并总结我上传的理赔单证。" : "");
   if (!question) return;
   state.busy = true;
+  $("newChat").disabled = true;
+  resetTrace();
+  $("traceStatus").textContent = "执行中";
+  traceNode("input", "done", "已接收本轮问题");
+  const fileMeta = files.map(file => ({name: file.name, size: file.size, type: file.type}));
+  setTraceParams("input", {question, files: fileMeta}, {question, history_count: state.history.slice(-12).length});
+  setTraceParams("documents", {files: fileMeta}, files.length ? undefined : {skipped: true, reason: "本轮无新附件"});
+  traceNode("documents", files.length ? "running" : "skipped", files.length ? `正在识别 ${files.length} 份附件` : "本轮无新附件");
   $("sendQuestion").disabled = true;
   state.pendingFiles = [];
   renderPendingFiles();
   addUserMessage(question, files);
   const article = addAssistantMessage();
   try {
+    const uploadStarted = performance.now();
     const documents = await analyzeFiles(files);
+    if (files.length) traceNode("documents", "done", `${documents.length} 份附件 · ${Math.round(performance.now() - uploadStarted)} ms（含传输）`);
+    if (files.length) setTraceParams("documents", undefined, {documents});
     state.documents.push(...documents);
+    state.documents = state.documents.slice(-6);
     await streamAnswer(question, documents, article);
   } catch (error) {
+    document.querySelectorAll(".trace-node.running").forEach(node => { traceNode(node.dataset.node, "error", "调用失败"); setTraceParams(node.dataset.node, undefined, {error: error.message}); });
+    traceNode("output", "error", error.message);
+    $("traceStatus").textContent = "执行失败";
     article.classList.add("error");
     article.querySelector(".bubble p").textContent = error.message;
   } finally {
     state.busy = false;
+    $("newChat").disabled = false;
     $("sendQuestion").disabled = false;
     scrollToBottom();
   }
@@ -171,6 +191,7 @@ $("attachButton").addEventListener("click", () => $("fileInput").click());
 $("fileInput").addEventListener("change", (event) => selectFiles(event.target.files));
 $("chatForm").addEventListener("submit", (event) => {
   event.preventDefault();
+  if (state.busy) return;
   const input = $("question");
   const value = input.value;
   input.value = "";
@@ -182,12 +203,14 @@ $("question").addEventListener("input", (event) => {
   event.target.style.height = `${Math.min(event.target.scrollHeight, 150)}px`;
 });
 $("question").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     $("chatForm").requestSubmit();
   }
 });
 $("newChat").addEventListener("click", () => {
+  if (state.busy) return;
+  resetTrace();
   state.documents = [];
   state.history = [];
   state.pendingFiles = [];
@@ -196,4 +219,57 @@ $("newChat").addEventListener("click", () => {
 });
 document.querySelectorAll(".quick-actions button").forEach((button) => button.addEventListener("click", () => sendMessage(button.textContent)));
 
+const traceNames = {
+  input: "接收消息", documents: "附件识别", classification: "多轮意图识别",
+  route: "选择回答链路", claims: "理赔智能体", general: "通用基模", output: "返回回答",
+};
+function setTraceParams(id, input, output) {
+  const node = document.querySelector(`[data-node="${id}"]`);
+  if (!node) return;
+  for (const [kind, value] of Object.entries({input, output})) {
+    if (value !== undefined) node.querySelector(`[data-param="${kind}"]`).textContent = JSON.stringify(redactTrace(value), null, 2);
+  }
+}
+function redactTrace(value) {
+  if (Array.isArray(value)) return value.map(redactTrace);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, val]) => [
+    key, /api.?key|password|secret|authorization|身份证|银行卡|手机号|地址/i.test(key) ? "[已脱敏]" : redactTrace(val)
+  ]));
+  if (typeof value !== "string") return value;
+  return value.replace(/sk-[A-Za-z0-9_-]+/g, "[密钥]").replace(/[0-9]{17}[0-9Xx]/g, "[身份证]").replace(/1[3-9][0-9]{9}/g, "[手机号]");
+}
+function traceNode(id, status, detail = "") {
+  const node = document.querySelector(`[data-node="${id}"]`);
+  if (!node) return;
+  node.className = `trace-node ${status}`;
+  node.querySelector(".node-state").textContent = {waiting:"等待", running:"执行中", done:"已完成", skipped:"未调用", error:"失败"}[status];
+  if (detail) node.querySelector("small").textContent = detail;
+}
+const traceDetails = {};
+function resetTrace() {
+  Object.keys(traceDetails).forEach(key => delete traceDetails[key]);
+  const node = id => `<div class="trace-node" data-node="${id}"><div class="node-head"><strong>${traceNames[id]}</strong><span class="node-state">等待</span></div><small>等待本轮执行</small><details class="trace-params"><summary>输入 / 输出参数</summary><h3>输入</h3><pre data-param="input">尚未调用</pre><h3>输出</h3><pre data-param="output">尚无输出</pre></details></div>`;
+  const arrow = '<div class="trace-arrow" aria-hidden="true">↓</div>';
+  $("traceGraph").innerHTML = ["input", "documents", "classification", "route"].map(node).join(arrow)
+    + arrow + '<div class="trace-branches">' + node("claims") + node("general") + '</div>' + arrow + node("output");
+  $("traceStatus").textContent = "等待提问";
+}
+function updateTrace(event) {
+  traceDetails[event.node] = { ...traceDetails[event.node], ...event };
+  event = traceDetails[event.node];
+  const detail = [event.model, event.intent,
+    event.history_count != null ? `参考 ${event.history_count} 条历史消息` : "",
+    event.elapsed_ms != null ? `${event.elapsed_ms} ms` : ""].filter(Boolean).join(" · ");
+  traceNode(event.node, event.status, detail);
+  setTraceParams(event.node, event.input, event.output);
+  if (["claims", "general"].includes(event.node) && event.output) {
+    setTraceParams("output", event.output, event.status === "done" ? {content: event.output.content, completed: true} : event.output);
+  }
+  if (event.node === "route") {
+    traceNode("route", "done", event.selected === "general" ? "一般咨询 → 通用基模" : "理赔意图 → 理赔智能体");
+    traceNode(event.selected === "general" ? "claims" : "general", "skipped", "本轮未选择此链路");
+  }
+  if (["claims", "general"].includes(event.node) && event.status === "running") traceNode("output", "running", "等待并接收流式回答");
+}
+resetTrace();
 checkHealth();

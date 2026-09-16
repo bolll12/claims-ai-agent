@@ -92,3 +92,49 @@ button { cursor: pointer; }
   .composer-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* 对话与实时调用链路并排，各自独立滚动。 */
+[hidden] { display: none !important; }
+.brand .brand-mark { display: grid; color: white; font-size: 16px; }
+.split-workspace { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(360px, 1fr); height: 100dvh; padding-top: 68px; }
+.chat-shell { min-height: 0; min-width: 0; padding: 0; height: 100%; overflow: hidden; border-right: 1px solid var(--line); }
+.messages { flex: 1; min-height: 0; overflow-y: auto; padding: 28px 24px; width: 100%; }
+.composer-wrap { position: relative; left: auto; bottom: auto; transform: none; width: 100%; padding: 12px 20px 16px; }
+.composer-wrap::before { display: none; }
+.message-body, .message.user .message-body { max-width: calc(100% - 42px); }
+.document-details { overflow-wrap: anywhere; }
+.trace-panel { min-height: 0; display: flex; flex-direction: column; background: #f1f4f2; }
+.trace-heading { padding: 24px; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; border-bottom: 1px solid var(--line); background: #fff; }
+.trace-heading h1 { margin: 0 0 6px; font-size: 17px; }
+.trace-heading p { margin: 0; font-size: 12px; color: var(--muted); }
+#traceStatus { font-size: 12px; color: var(--green); white-space: nowrap; }
+.trace-canvas { flex: 1; overflow: auto; padding: 28px 24px; background-image: radial-gradient(#d8e0da 1px, transparent 1px); background-size: 18px 18px; }
+.trace-graph { max-width: 460px; margin: auto; }
+.trace-node { position: relative; padding: 12px 14px; border: 1px solid #d7dfd9; border-radius: 8px; background: white; color: var(--muted); min-width: 0; }
+.trace-node strong { font-size: 13px; display: block; color: var(--ink); }
+.trace-node small { display: block; margin-top: 5px; line-height: 1.5; overflow-wrap: anywhere; }
+.node-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.node-state { font-size: 11px; white-space: nowrap; }
+.trace-node.done { border-color: #8cbda7; background: #f4fbf7; }
+.trace-node.running { border-color: var(--green); box-shadow: 0 0 0 3px #176b4d16; }
+.trace-node.error { border-color: #cf7d76; background: #fff4f3; }
+.trace-node.error .node-state { color: var(--red); }
+.trace-node.skipped { opacity: .6; border-style: dashed; }
+.trace-arrow { height: 25px; display: grid; place-items: center; color: #8b9d90; font-size: 18px; }
+.trace-branches { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; position: relative; }
+.trace-footer { display: flex; justify-content: center; gap: 20px; padding: 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+@media (max-width: 760px) {
+  .split-workspace { grid-template-columns: minmax(0, 1fr); height: auto; padding-top: 62px; }
+  .chat-shell { height: calc(100dvh - 62px); border-right: 0; }
+  .trace-panel { min-height: 600px; border-top: 1px solid var(--line); }
+  .messages { padding: 22px 13px; }
+  .composer-wrap { padding: 10px; }
+}
+
+.trace-node.done, .trace-node.running { background: #10543e; border-color: #10543e; color: #e0f3e9; }
+.trace-node.done strong, .trace-node.running strong { color: #fff; }
+.trace-node.running { box-shadow: 0 0 0 3px #176b4d35; }
+.trace-params { margin-top: 10px; border-top: 1px solid #ffffff35; padding-top: 8px; }
+.trace-params summary { cursor: pointer; font-size: 12px; }
+.trace-params h3 { font-size: 11px; margin: 12px 0 5px; }
+.trace-params pre { margin: 0; padding: 10px; background: #00000012; border-radius: 5px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 250px; overflow: auto; }

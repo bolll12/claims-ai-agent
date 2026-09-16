@@ -74,6 +74,19 @@ def test_text_document_analysis_and_streaming_question() -> None:
         assert response.status_code == 200
         assert '请补充' in response.text and '费用清单' in response.text
         assert '材料审核' in response.text
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+        traces = [event['trace'] for event in events if 'trace' in event]
+        assert [(event['node'], event['status']) for event in traces] == [
+            ('classification', 'running'), ('classification', 'done'),
+            ('route', 'done'), ('claims', 'running'), ('claims', 'done'),
+        ]
+        assert traces[2]['selected'] == 'claims'
+        assert traces[-1]['elapsed_ms'] >= 0
+        assert traces[0]['input']['messages'][-1]['role'] == 'human'
+        assert traces[1]['output']['intent'] == '材料审核'
+        assert traces[2]['output']['selected'] == 'claims'
+        assert traces[3]['input']['messages'][-1]['content'] == '还缺什么材料？'
+        assert traces[-1]['output']['content'] == '请补充费用清单。'
         assert '保险理赔客服助手' in model.stream_system_prompts[-1]
         assert response.headers['content-type'].startswith('text/event-stream')
 

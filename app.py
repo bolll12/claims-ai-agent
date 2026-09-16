@@ -264,8 +264,12 @@ def create_app(
             return messages
 
         async def events():
+            stage = 'classification'
+            started = time.monotonic()
+            def trace(node: str, status: str, **details: Any) -> str:
+                return f"data: {json.dumps({'trace': mask_pii({'node': node, 'status': status, **details})}, ensure_ascii=False)}\n\n"
             try:
-                intent_response = await classifier.ainvoke([
+                classification_messages = [
                     SystemMessage(content=(
                         '你是理赔对话意图分类器。只能返回JSON对象，包含intent和confidence。'
                         'intent只能是：理赔报案、材料审核、进度查询、条款咨询、补充材料、一般咨询。'
@@ -284,11 +288,22 @@ def create_app(
                         f'当前问题：{mask_pii(body.question)}\n'
                         f'当前会话共有{len(body.documents)}份已识别单证。'
                     )),
-                ])
+                ]
+                def model_inputs(model: Any, messages: list[Any]) -> dict[str, Any]:
+                    return {
+                        'model': getattr(model, 'model_name', '测试模型'),
+                        'temperature': getattr(model, 'temperature', None),
+                        'max_tokens': getattr(model, 'max_tokens', None),
+                        'messages': [{'role': message.type, 'content': message.content} for message in messages],
+                    }
+                yield trace(stage, 'running', model=getattr(classifier, 'model_name', '意图模型'),
+                            history_count=len(recent_history), input=model_inputs(classifier, classification_messages))
+                intent_response = await classifier.ainvoke(classification_messages)
                 raw_intent = chat_content(intent_response).strip()
                 if raw_intent.startswith('```'):
                     raw_intent = raw_intent.removeprefix('```json').removeprefix('```').removesuffix('```').strip()
                 intent = IntentResult.model_validate_json(raw_intent)
+                yield trace(stage, 'done', elapsed_ms=round((time.monotonic() - started) * 1000), intent=intent.intent, output=intent.model_dump())
                 yield f"data: {json.dumps({'intent': intent.intent, 'intent_confidence': intent.confidence}, ensure_ascii=False)}\n\n"
                 if intent.intent == '一般咨询':
                     llm = general_model or ClaimLLMFactory.create(
@@ -311,12 +326,20 @@ def create_app(
                         '涉及拒赔、责任比例、金额或法律判断时提示由授权人员依据有效条款复核。'
                         f'当前案件号：{mask_pii(body.claim_id or "未填写")}。已识别单证：{context}'
                     )
+                stage = 'general' if intent.intent == '一般咨询' else 'claims'
+                yield trace('route', 'done', selected=stage, input=intent.model_dump(), output={'selected': stage, 'model': getattr(llm, 'model_name', '测试模型')})
+                started = time.monotonic()
+                yield trace(stage, 'running', model=getattr(llm, 'model_name', '回答模型'), input=model_inputs(llm, messages))
+                answer_parts: list[str] = []
                 async for chunk in llm.astream(messages):
                     content = chat_content(chunk)
                     if content:
+                        answer_parts.append(content)
                         yield f"data: {json.dumps({'content': mask_pii(content)}, ensure_ascii=False)}\n\n"
+                yield trace(stage, 'done', elapsed_ms=round((time.monotonic() - started) * 1000), output={'content': ''.join(answer_parts)})
                 yield f"data: {json.dumps({'done': True})}\n\n"
             except Exception:
+                yield trace(stage, 'error', elapsed_ms=round((time.monotonic() - started) * 1000), output={'error': '调用失败，未返回有效结果'})
                 ERRORS.labels('assistant_model').inc()
                 yield f"data: {json.dumps({'error': '意图识别或问答模型暂不可用，请检查本地推理服务'}, ensure_ascii=False)}\n\n"
 

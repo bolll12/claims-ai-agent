@@ -16,7 +16,8 @@
     <button id="newChat" class="new-chat" type="button"><span aria-hidden="true">＋</span>新对话</button>
   </header>
 
-  <main class="chat-shell">
+  <main class="split-workspace">
+  <section class="chat-shell" aria-label="智能体对话">
     <section id="chatMessages" class="messages" aria-live="polite">
       <article class="message assistant">
         <div class="avatar" aria-hidden="true">理</div>
@@ -43,6 +44,14 @@
       </form>
       <p class="composer-note">模型会识别对话意图。重要结论仍需依据真实保单条款和人工审核。</p>
     </div>
+  </section>
+  <aside class="trace-panel" aria-label="链路调用可视化">
+    <header class="trace-heading"><div><h1>调用链路</h1><p>跟随当前对话，查看实际执行过程</p></div><span id="traceStatus">等待提问</span></header>
+    <div class="trace-canvas">
+      <div id="traceGraph" class="trace-graph"></div>
+    </div>
+    <footer class="trace-footer"><span>● 已完成</span><span>◉ 执行中</span><span>○ 未执行</span></footer>
+  </aside>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
