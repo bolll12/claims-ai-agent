@@ -1,0 +1,17 @@
+.git
+.env
+.env.*
+!.env.example
+.venv*
+.data
+__pycache__
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.db
+*.sqlite*
+*.log
+.coverage
+htmlcov
+isolated_deep

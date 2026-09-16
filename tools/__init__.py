@@ -1,1 +1,5 @@
-"""保单、理算、医保工具及共享模型调用能力的模块落点。"""
+"""理赔查询、理算、医保、检索及回写工具公共入口。"""
+
+from tools.claim_tool import ClaimToolsRegistry, build_claim_tools, tool_round
+
+__all__ = ["ClaimToolsRegistry", "build_claim_tools", "tool_round"]

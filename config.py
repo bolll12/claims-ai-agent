@@ -8,6 +8,8 @@ from typing import Final, Literal
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
+from functools import lru_cache
+from settings import Settings
 
 load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
 
@@ -17,11 +19,12 @@ def _env(name: str, default: str) -> str:
     return os.getenv(name, "").strip() or default
 
 
-OPENAI_BASE_URL: Final[str] = _env(
-    "OPENAI_BASE_URL", "http://127.0.0.1:8000/v1"
-).rstrip("/")
-# EMPTY 是无鉴权本地服务的占位值，真实密钥从环境注入。
-OPENAI_API_KEY: Final[SecretStr] = SecretStr(_env("OPENAI_API_KEY", "EMPTY"))
+# 用户已选择LangFuse，关闭LangChain自动向LangSmith上报。
+os.environ['LANGCHAIN_TRACING_V2'] = 'false'
+os.environ['LANGSMITH_TRACING'] = 'false'
+settings = Settings()
+OPENAI_BASE_URL: Final[str] = settings.model_url
+OPENAI_API_KEY: Final[SecretStr] = settings.model_key
 
 
 STOP_MARKER: Final[str] = "<END_CLAIM>"
@@ -38,12 +41,15 @@ def _chat(
     presence_penalty: float = 0.0,
     seed: int = 42,
     response_format: Literal["text", "json_object"] = "text",
+    base_url: str | None = None,
+    api_key: SecretStr | None = None,
+    max_retries: int = 2,
 ) -> ChatOpenAI:
     """统一创建聊天模型，实例化不发起网络请求。"""
     return ChatOpenAI(
         model=model,
-        base_url=OPENAI_BASE_URL,
-        api_key=OPENAI_API_KEY,
+        base_url=base_url if base_url is not None else OPENAI_BASE_URL,
+        api_key=api_key if api_key is not None else OPENAI_API_KEY,
         temperature=temperature,
         top_p=top_p,
         max_tokens=max_tokens,
@@ -54,16 +60,16 @@ def _chat(
         seed=seed,
         model_kwargs={"response_format": {"type": response_format}},
         timeout=120.0,
-        max_retries=2,
+        max_retries=max_retries,
     )
 
 
 # 通用：报案理解、材料摘要与常规问答。
-qwen_plus: Final[ChatOpenAI] = _chat(_env("QWEN_PLUS_MODEL", "qwen-plus"))
+qwen_plus: Final[ChatOpenAI] = _chat(settings.model_name("plus"))
 # 强推理：复杂责任分析、条款比对与多证据判断。
-qwen_max: Final[ChatOpenAI] = _chat(_env("QWEN_MAX_MODEL", "qwen-max"))
+qwen_max: Final[ChatOpenAI] = _chat(settings.model_name("max"))
 # 轻量降级：简单分类和备用调用，自动切换由上层编排实现。
-qwen_flash: Final[ChatOpenAI] = _chat(_env("QWEN_FLASH_MODEL", "qwen-flash"))
+qwen_flash: Final[ChatOpenAI] = _chat(settings.model_name("flash"))
 
 
 @dataclass(frozen=True)
@@ -99,7 +105,7 @@ TASK_PROFILES: Final[dict[str, TaskProfile]] = {
 def _task_model(profile: TaskProfile) -> ChatOpenAI:
     """将任务参数传入统一工厂，沿用环境变量指定的服务与模型。"""
     return _chat(
-        _env(f"QWEN_{profile.tier.upper()}_MODEL", f"qwen-{profile.tier}"),
+        settings.model_name(profile.tier),
         temperature=profile.temperature,
         top_p=profile.top_p,
         max_tokens=profile.max_tokens,
@@ -119,3 +125,34 @@ def get_model(task: str) -> ChatOpenAI:
     if task not in MODEL_ROUTING:
         raise ValueError(f"未知理赔任务：{task}")
     return MODEL_ROUTING[task]
+
+
+class ClaimLLMFactory:
+    """四档模型缓存工厂，返回ChatOpenAI原生同步、异步、流式和批量接口。"""
+    @staticmethod
+    @lru_cache(maxsize=32)
+    def create(tier: str = 'main', **overrides: object) -> ChatOpenAI:
+        profiles = {'fast': ('flash', 0.5), 'main': ('plus', 0.3),
+                    'pro': ('max', 0.1), 'vision': ('vision', 0.1)}
+        if tier not in profiles:
+            raise ValueError('未知模型档位：' + tier)
+        name, temperature = profiles[tier]
+        parameters = dict(temperature=temperature, max_tokens=2000, stop=())
+        parameters.update(overrides)
+        return _chat(settings.model_name(name), **parameters)
+
+    @property
+    def fast_model(self) -> ChatOpenAI:
+        return self.create('fast')
+
+    @property
+    def main_model(self) -> ChatOpenAI:
+        return self.create('main')
+
+    @property
+    def pro_model(self) -> ChatOpenAI:
+        return self.create('pro')
+
+    @property
+    def vision_model(self) -> ChatOpenAI:
+        return self.create('vision')

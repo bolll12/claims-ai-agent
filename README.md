@@ -1,71 +1,126 @@
-# 理赔 Agent 分层启动项目
+# 理赔 Agent 培训材料实现
 
-本项目落实本地模型工厂、FastAPI 占位接口和环境验证脚本。业务流程尚未接入，理赔处理始终返回 `pending`。
+依据 `claims-langchain-training.md` 实现分层代码、演示、测试和部署配置。主项目保持Python 3.10+、LangChain 0.3.14、langchain-openai 0.2.14；官方Deep Agents单独安装。默认连接本地推理，百炼需显式选择。真实模式未配置业务适配器会转人工，不返回假保单或虚构定损。
 
-## 模块落点
+完整逐项映射及验证边界见 [实现验收清单](docs/implementation-matrix.md)；原文API与业务规则修正见 [差异记录](docs/material-differences.md)。
+
+## 结构与职责
 
 ```text
 claims-agent-app/
-├── app.py                  # 主入口（FastAPI）
-├── config.py               # 配置、模型初始化与任务参数路由
-├── requirements.txt        # 精确锁定直接及传递依赖
-├── .env.example            # 环境变量模板
-├── agents/                 # 理赔、风控 Agent 与置信度
-│   ├── __init__.py         # Python 包声明
-│   ├── claim_agent.py      # 理赔 Agent（LangGraph 状态机落点）
-│   ├── risk_agent.py       # 风控 Agent 落点
-│   └── confidence.py       # 置信度子系统落点
-├── tools/                  # 保单、理算、医保工具与共享调用能力
-│   ├── __init__.py         # Python 包声明
-│   └── llm_calls.py        # 同步、流式和结构化模型调用
-├── prompts/                # 审核、风控 Prompt
-│   └── __init__.py         # Python 包声明
-├── models/                 # Pydantic 契约
-│   ├── __init__.py         # Python 包声明
-│   └── schemas.py          # 请求与响应契约
-├── tests/                  # 单元与集成测试
-│   ├── __init__.py         # Python 包声明
-│   ├── test_smoke.py       # HTTP 接口冒烟测试
-│   └── test_llm_parameters.py # 模型请求参数验证
-├── scripts/                # venv 搭建及服务验证脚本
-└── README.md               # 启动与开发说明
+├── app.py                      # FastAPI、状态查询、补材料、授权审核恢复
+├── settings.py                 # Pydantic环境配置与密钥校验
+├── config.py                   # 本地模型工厂、四档缓存和任务参数
+├── claims_agent.py             # 端到端入口与明确标注的离线演示
+├── confidence_system.py        # 置信度公共入口，复用agents实现
+├── requirements.txt            # 主项目及传递依赖精确锁定
+├── .env.example                # 环境模板，不包含真实密钥
+├── agents/                     # 审核编排、风险分析、置信度、记忆和中间件
+│   ├── __init__.py             # Python包声明
+│   ├── claim_agent.py          # LangGraph、Send并行、HITL、规划执行
+│   ├── risk_agent.py           # 结构化专家意见与本地模型调用
+│   ├── confidence.py           # Softmax/熵/贝叶斯/融合/温度/ECE
+│   ├── memory.py               # 窗口、摘要、实体冲突与Redis持久化
+│   ├── middleware_audit.py     # 脱敏、限流、缓存、重试、审计、Token统计
+│   ├── middleware.py           # 中间件公共入口
+│   ├── observability.py        # LangFuse v2嵌套追踪和脱敏回调
+│   └── deep_claims_agent.py    # 独立Deep Agents环境的延迟入口
+├── tools/                      # 八类业务工具及模型、检索、回写能力
+│   ├── __init__.py             # Python包声明
+│   ├── policy_tool.py          # 保单及理赔历史查询
+│   ├── medical_tool.py         # 异步医保核验
+│   ├── claim_tool.py           # 工具注册、审批绑定与并行消息闭环
+│   ├── llm_calls.py            # 同步与流式调用
+│   ├── rag_retrieval.py        # 文档加载、Milvus、混合检索及引用校验
+│   └── claim_write_producer.py # 幂等Outbox、重试及对账
+├── adapters/                   # 真实接口与演示后端，未配置显式失败
+├── prompts/                    # 四场景模板、动态规则与本地固定版本
+├── models/                     # Pydantic契约、有限修复和Schema迁移
+├── tests/                      # 单元、SDK协议、状态机、HTTP与可选Milvus集成
+├── demos/                      # 参数/消息/本地接口/LangFuse演示及Mermaid源码
+├── isolated_deep/              # 官方Deep Agents独立依赖、运行时和测试
+├── scripts/                    # 安装验证、解析基准与Schema迁移
+├── deploy/                     # 对拍、门禁、环境配置、监控告警和运维手册
+├── monitoring.py               # Prometheus六组业务指标
+├── health_check.py             # 三条HTTP健康与状态机验证
+├── Dockerfile                  # 非root、8001端口、单工作进程
+├── docker-compose.yml          # 应用及Redis/Milvus基础设施
+├── docker-compose.langfuse.yml # 独立自托管LangFuse
+├── deploy.sh                   # 固定镜像版本发布与失败回退
+└── .github/workflows/deploy.yml # 检查、测试、容器集成、构建及可选发布
 ```
 
-五个 Python 包均包含 `__init__.py`。
+agents/tools/prompts/models/tests及新增Python包均有`__init__.py`。
 
-三个 Agent 模块当前预留职责，尚未实现状态机、风控及置信度算法。
-模型调用统一从 `tools.llm_calls` 导入，任务模型从 `config.get_model` 获取。
+## 安装和离线验证
 
-## 搭建与验证
-
-在本目录使用 macOS/Linux bash 执行：
+在项目根目录执行。Python 3.10兼容；本机3.10发行版会注入其他项目依赖，因此本次完整安装使用干净的Python 3.12。
 
 ```bash
-bash scripts/setup_and_verify.sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip check
+# 首次创建；已有.env不要覆盖。
+if [ ! -f .env ]; then cp .env.example .env; chmod 600 .env; fi
+python -m pytest -q
+python claims_agent.py --demo
+python -m demos.module04_demo --prompts
+python -m scripts.benchmark_parsers
 ```
 
-脚本依次创建并激活 `.venv`、安装依赖、检查约束、运行 pytest，随后在 `8001` 端口启动服务并验证 `/health` 和理赔接口。验证完成自动停止服务，保留临时日志。默认本地推理服务使用 `8000` 端口，与 HTTP 应用分开。
+这些离线演示不代表真实模型、赔付系统或向量服务已联通。模型服务需支持OpenAI兼容聊天、JSON、tools；部分流式服务不返回usage，此时用量标记未知，不能声称零成本。固定seed只尽力复现。
 
-依赖文件的安装基线是 Python 3.10 / macOS ARM64；其他平台与 Python 版本需要重新验证，尤其是 Milvus Lite 和 NumPy 的二进制支持。
-
-单独启动：
+## 启动HTTP服务
 
 ```bash
 source .venv/bin/activate
-python -m uvicorn app:app --host 127.0.0.1 --port 8001
+uvicorn app:app --host 127.0.0.1 --port 8001
+# 另一个终端
+curl -fsS http://127.0.0.1:8001/health
+python health_check.py
 ```
 
-## 配置
+也可先停止8001端口的现有本项目服务，再运行`bash scripts/verify.sh`完成启动与pytest两条验证链路。
 
-按需复制 `.env.example` 为 `.env`。部署环境变量优先于文件。`OPENAI_BASE_URL` 默认指向 `http://127.0.0.1:8000/v1`；`OPENAI_API_KEY` 默认 `EMPTY` 仅适用于无鉴权的本地服务。真实密钥通过环境注入，`.env` 不提交。
+| 路由 | 行为 |
+| --- | --- |
+| GET /health | 仅进程存活，不代表模型可用 |
+| POST /api/claims/process | 创建审核工作流；缺保单号进入补材料中断 |
+| GET /api/claims/{claim_id} | 查询已持久化案件状态 |
+| POST /api/claims/{claim_id}/supplement | 仅补材料阶段接受policy_id |
+| POST /api/claims/{claim_id}/review | X-Reviewer-Key认证后恢复人工审核 |
+| GET /metrics | Prometheus格式指标 |
+| GET /docs | 自动生成的接口文档 |
 
-三个模型别名 `qwen_plus`、`qwen_max`、`qwen_flash` 分别用于通用、强推理、轻量降级任务，共用服务地址。通过 `QWEN_*_MODEL` 配置服务实际注册的模型名称。工厂默认温度为 0，自动降级和状态机留给后续模块实现。
+请求支持description或claim_text，以及可选policy_id、amount。返回的是审核建议，不执行支付。SQLite检查点保存在`.data/checkpoints.sqlite`，重启可恢复。拒赔需授权人工提供条款依据；低置信度、证据不足和大额转人工。生产必须配置CLAIMS_API_KEY和REVIEWER_API_KEY；示例不支持多租户行级权限，也不能直接横向扩容。
 
-`CORS_ALLOW_ORIGINS` 为逗号分隔的前端来源，默认包含本地 3000 端口。默认冒烟测试按该配置验证 CORS。
+## 本地模型与可选百炼
 
-## 接口
+MODEL_PROVIDER默认local，使用LOCAL_LLM_BASE_URL/API_KEY和LOCAL_FAST/MAIN/PRO/VISION_MODEL。名称必须与推理服务实际注册名一致。本地服务端口默认8000，应用端口8001。
 
-- `GET /health`：返回 `{"status":"ok"}`，仅表示进程存活。
-- `POST /api/claims/process`：接收 `claim_id` 和 `description`，返回案件标识、`pending` 状态及占位说明；缺少必填字段或空白输入返回 422。
+只有设置MODEL_PROVIDER=bailian才使用OPENAI_BASE_URL/API_KEY及QWEN_*_MODEL；已有百炼密钥无需删除，但不会自动用于本地模式。三个qwen别名分别映射通用、强推理、轻量模型。
 
-接口冒烟测试不请求本地推理服务，不写入案件数据。
+## 业务、RAG与记忆接入
+
+- `BusinessBackend(adapters={...})`注册组织内真实协议。保单HTTP实现来自材料；其余接口没有协议，必须显式注册，不能靠默认成功返回值闭环。
+- `DemoBackend`仅提供材料里的固定教学案例。`claims_agent.py --demo`还使用明确标记的合成专家结果。未执行实际模型调用。
+- 写工具只有服务端authorize核对案件、金额、收款方等参数后才入Outbox。通知也需要审批。消费者须向下游传递相同幂等键并对账。
+- `load_documents`要求险种、版本、生效日期；`ClaimVectorStore`默认不删除旧集合。混合检索使用加权RRF，重排通过已核实的reranker函数注入。扫描PDF需另接OCR。
+- `ClaimContextManager`可注入Redis客户端、摘要链和实体抽取器；Qwen需注入匹配模型的token_counter，默认cl100k_base只作教学计数，首次使用需准备tiktoken缓存。
+
+## 追踪、基础设施及部署
+
+```bash
+# 需要Docker；未装Docker的机器不能执行以下联调。
+docker compose --profile infra up -d --wait etcd minio milvus redis
+RUN_MILVUS_TESTS=1 python -m pytest -q tests/test_milvus_integration.py
+# 配置LangFuse数据库密码、认证secret和salt后：
+docker compose -f docker-compose.langfuse.yml up -d
+# 在控制台创建项目、填写.env里的public/secret key并开启LANGFUSE_ENABLED后：
+python -m demos.langfuse_demo --invoke
+```
+
+LangSmith演示已移除，自动追踪关闭；`langsmith`包仍是LangChain 0.3强制传递依赖，不能删除后还宣称依赖兼容。Deep Agents使用独立环境及LangFuse v3，详见`isolated_deep/README.md`。
+
+上线前运行固定历史数据集门禁：`python -m deploy.regression_gate metrics.json --cost-budget 实际预算`。CI的自动部署默认关闭，须配置生产环境审批、SSH信任、固定镜像和目标检出版本后启用。部署操作和真实业务通知均未在此次实现中执行。

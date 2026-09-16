@@ -1,0 +1,4 @@
+environment: staging
+port: 8001
+health_timeout: 5
+workers: 1

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# macOS/Linux bash：创建 venv、安装依赖、执行两条验证链路。
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
-python3 -c 'import sys; assert sys.version_info >= (3, 10), "需要 Python 3.10+"; print(sys.version)'
-python3 -m venv .venv
+cd "$(dirname "$0")/.."
+# 可用PYTHON_BIN=python3.10覆盖；本机默认采用干净的Python 3.12发行版。
+"${PYTHON_BIN:-python3.12}" -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m pip check
+if [[ ! -f .env ]]; then cp .env.example .env; chmod 600 .env; fi
 python -m pytest -q
 bash scripts/verify.sh

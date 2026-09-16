@@ -6,6 +6,7 @@ langchain-text-splitters==0.3.5
 langchain-openai==0.2.14
 openai==1.59.7
 tiktoken==0.8.0
+# LangChain强制传递依赖，追踪已关闭；无LangSmith业务代码。
 langsmith==0.2.10
 
 # Agent 流程编排与检查点
@@ -17,6 +18,7 @@ langgraph-sdk==0.1.51
 langchain-milvus==0.1.7
 pymilvus==2.4.10
 numpy==1.26.4
+scipy==1.14.1
 setuptools==75.6.0
 
 # 数据契约与配置
@@ -42,7 +44,7 @@ pytest==8.3.4
 pytest-asyncio==0.25.2
 pytest-cov==6.0.0
 
-# 传递依赖完整锁定（Python 3.10 / macOS ARM64 解析基线）
+# 传递依赖完整锁定（Python 3.10+；本次干净安装验证为Python 3.12/macOS ARM64）
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.3
 aiosignal==1.4.0
@@ -95,3 +97,28 @@ tzdata==2026.4
 ujson==6.0.0
 urllib3==2.7.0
 yarl==1.24.5
+
+# 新增模块与解析出的传递依赖（干净Python 3.12环境验证）
+aiosqlite==0.20.0
+backoff==2.2.1
+bandit==1.8.3
+beautifulsoup4==4.12.3
+fakeredis==2.26.2
+langfuse==2.60.8
+langgraph-checkpoint-sqlite==2.0.1
+lxml==6.1.3
+markdown-it-py==4.2.0
+mdurl==0.1.2
+mypy==1.15.0
+prometheus_client==0.21.1
+Pygments==2.21.0
+pypdf==5.1.0
+python-docx==1.1.2
+rank-bm25==0.2.2
+redis==5.2.1
+rich==15.0.0
+ruff==0.9.10
+sortedcontainers==2.4.0
+soupsieve==2.9.2
+stevedore==5.9.1
+wrapt==1.17.3

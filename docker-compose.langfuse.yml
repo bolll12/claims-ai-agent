@@ -1,0 +1,28 @@
+# 单独启动：docker compose -f docker-compose.langfuse.yml up -d
+# v2用于匹配材料SDK；生产需将LANGFUSE_IMAGE设置为已审计的固定镜像digest。
+services:
+  langfuse-db:
+    image: postgres:16.6-alpine
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:?请设置数据库密码}
+      POSTGRES_DB: langfuse
+    volumes: ["langfuse_db:/var/lib/postgresql/data"]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  langfuse:
+    image: ${LANGFUSE_IMAGE:-langfuse/langfuse:2}
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      langfuse-db: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:?请设置数据库密码}@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: ${LANGFUSE_HOST:-http://127.0.0.1:3000}
+      NEXTAUTH_SECRET: ${LANGFUSE_AUTH_SECRET:?请设置随机认证密钥}
+      SALT: ${LANGFUSE_SALT:?请设置随机盐}
+      TELEMETRY_ENABLED: "false"
+volumes:
+  langfuse_db:
