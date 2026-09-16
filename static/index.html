@@ -3,78 +3,46 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="理赔智能工作台：单证识别、案件处理与智能问答">
-  <title>理赔智能工作台</title>
+  <meta name="description" content="支持单证上传与意图识别的理赔智能助手">
+  <title>理赔智能助手</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">理</span>
-      <div><strong>理赔智能工作台</strong><span>单证识别与案件协同</span></div>
+      <div><strong>理赔智能助手</strong><span><i id="healthDot"></i><b id="healthText">正在连接</b></span></div>
     </div>
-    <div class="service-state"><span id="healthDot" class="status-dot"></span><span id="healthText">正在连接服务</span></div>
+    <button id="newChat" class="new-chat" type="button"><span aria-hidden="true">＋</span>新对话</button>
   </header>
 
-  <main class="workspace">
-    <aside class="case-panel" aria-label="案件信息">
-      <div class="panel-heading">
-        <div><span class="section-index">01</span><h1>当前案件</h1></div>
-        <button id="newCase" class="icon-button" type="button" title="新建案件" aria-label="新建案件">＋</button>
-      </div>
-      <label for="claimId">案件编号</label>
-      <input id="claimId" autocomplete="off" maxlength="64" placeholder="例如 CLM-2026-001">
-      <label for="policyId">保单编号 <span>选填</span></label>
-      <input id="policyId" autocomplete="off" maxlength="64" placeholder="补充后可进入审核">
-      <label for="amount">报损金额 <span>选填</span></label>
-      <div class="money-input"><span>¥</span><input id="amount" inputmode="decimal" placeholder="0.00"></div>
-      <label for="description">事故说明</label>
-      <textarea id="description" maxlength="10000" placeholder="简要描述事故时间、地点、经过及损失情况"></textarea>
-      <button id="submitClaim" class="primary-button" type="button">提交案件</button>
-      <div id="claimStatus" class="claim-status" hidden>
-        <span id="statusLabel"></span>
-        <strong id="statusMessage"></strong>
-      </div>
-      <p class="privacy-note">附件仅用于本次识别，不在服务器落盘。敏感信息将在模型调用前脱敏。</p>
-    </aside>
-
-    <section class="document-panel" aria-label="单证识别">
-      <div class="panel-heading wide-heading">
-        <div><span class="section-index">02</span><h2>单证识别</h2></div>
-        <span id="fileCount" class="quiet-label">尚未添加附件</span>
-      </div>
-      <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="选择或拖放理赔附件">
-        <div class="upload-symbol" aria-hidden="true">↑</div>
-        <strong>拖入理赔单证，或点击选择</strong>
-        <span>支持 PDF、DOCX、TXT、PNG、JPEG、WebP，单个不超过 10MB</span>
-        <input id="fileInput" type="file" multiple accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp" hidden>
-      </div>
-      <div id="documentList" class="document-list" aria-live="polite">
-        <div class="empty-state">
-          <span>暂无单证</span>
-          <p>上传发票、病历、事故证明或查勘照片后，识别结果会显示在这里。</p>
+  <main class="chat-shell">
+    <section id="chatMessages" class="messages" aria-live="polite">
+      <article class="message assistant">
+        <div class="avatar" aria-hidden="true">理</div>
+        <div class="message-body">
+          <div class="bubble">
+            <p>你好，我是理赔智能助手。你可以直接描述事故、询问理赔流程，或上传发票、病历、事故证明等单证。</p>
+          </div>
+          <div class="quick-actions" aria-label="常用问题">
+            <button type="button">我要申请理赔</button>
+            <button type="button">帮我审核理赔材料</button>
+            <button type="button">查询案件进度</button>
+          </div>
         </div>
-      </div>
+      </article>
     </section>
 
-    <aside class="assistant-panel" aria-label="理赔问答">
-      <div class="panel-heading wide-heading">
-        <div><span class="section-index">03</span><h2>理赔助手</h2></div>
-        <button id="clearChat" class="text-button" type="button">清空</button>
-      </div>
-      <div class="suggestions" aria-label="常用问题">
-        <button type="button">还需要补充哪些材料？</button>
-        <button type="button">总结已识别的关键信息</button>
-        <button type="button">有哪些信息需要人工核实？</button>
-      </div>
-      <div id="chatMessages" class="chat-messages" aria-live="polite">
-        <div class="message assistant">你好，我可以结合已识别单证回答理赔相关问题。重要结论仍需依据真实保单条款和人工审核。</div>
-      </div>
-      <form id="chatForm" class="chat-form">
-        <textarea id="question" rows="2" maxlength="4000" placeholder="询问材料、流程、条款或当前案件…" aria-label="输入理赔问题"></textarea>
-        <button id="sendQuestion" class="send-button" type="submit" aria-label="发送问题" title="发送问题">↑</button>
+    <div class="composer-wrap">
+      <div id="pendingFiles" class="pending-files" hidden></div>
+      <form id="chatForm" class="composer">
+        <button id="attachButton" class="icon-button" type="button" aria-label="上传附件" title="上传附件">＋</button>
+        <input id="fileInput" type="file" multiple accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp" hidden>
+        <textarea id="question" rows="1" maxlength="4000" placeholder="输入理赔问题，或上传附件…" aria-label="输入理赔问题"></textarea>
+        <button id="sendQuestion" class="send-button" type="submit" aria-label="发送" title="发送">↑</button>
       </form>
-    </aside>
+      <p class="composer-note">模型会识别对话意图。重要结论仍需依据真实保单条款和人工审核。</p>
+    </div>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

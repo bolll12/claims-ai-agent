@@ -1,4 +1,4 @@
-const state = { documents: [], history: [], busy: false };
+const state = { documents: [], history: [], pendingFiles: [], busy: false };
 const $ = (id) => document.getElementById(id);
 
 function toast(message) {
@@ -22,10 +22,10 @@ async function api(path, options = {}) {
 async function checkHealth() {
   try {
     await api("/health");
-    $("healthDot").className = "status-dot online";
+    $("healthDot").className = "online";
     $("healthText").textContent = "服务运行正常";
   } catch (_) {
-    $("healthDot").className = "status-dot offline";
+    $("healthDot").className = "offline";
     $("healthText").textContent = "服务暂不可用";
   }
 }
@@ -36,131 +36,159 @@ function escapeHtml(value) {
   return div.innerHTML;
 }
 
-function renderDocuments() {
-  const list = $("documentList");
-  $("fileCount").textContent = state.documents.length ? `已识别 ${state.documents.length} 份` : "尚未添加附件";
-  if (!state.documents.length) {
-    list.innerHTML = '<div class="empty-state"><span>暂无单证</span><p>上传发票、病历、事故证明或查勘照片后，识别结果会显示在这里。</p></div>';
-    return;
-  }
-  list.innerHTML = state.documents.map((doc) => {
+function scrollToBottom() {
+  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+}
+
+function fileCards(files) {
+  if (!files.length) return "";
+  return `<div class="attachment-list">${files.map((file) => `<div class="attachment-card"><strong>${escapeHtml(file.name)}</strong><span>${(file.size / 1024).toFixed(1)} KB</span></div>`).join("")}</div>`;
+}
+
+function addUserMessage(content, files = []) {
+  const article = document.createElement("article");
+  article.className = "message user";
+  article.innerHTML = `<div class="message-body">${fileCards(files)}<div class="bubble"><p>${escapeHtml(content)}</p></div></div>`;
+  $("chatMessages").appendChild(article);
+  scrollToBottom();
+}
+
+function addAssistantMessage() {
+  const article = document.createElement("article");
+  article.className = "message assistant";
+  article.innerHTML = '<div class="avatar" aria-hidden="true">理</div><div class="message-body"><div class="intent" hidden></div><div class="bubble"><p>正在分析…</p></div><div class="document-details" hidden></div></div>';
+  $("chatMessages").appendChild(article);
+  scrollToBottom();
+  return article;
+}
+
+function renderDocumentDetails(node, documents) {
+  if (!documents.length) return;
+  node.hidden = false;
+  node.innerHTML = documents.map((doc) => {
     const fields = Object.entries(doc.fields || {}).map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("");
-    const warnings = (doc.warnings || []).map((item) => `<div class="warning">需核实：${escapeHtml(item)}</div>`).join("");
+    const warnings = (doc.warnings || []).map((item) => `<div class="document-warning">需核实：${escapeHtml(item)}</div>`).join("");
     const confidence = doc.confidence == null ? "置信度未知" : `置信度 ${Math.round(doc.confidence * 100)}%`;
-    return `<article class="document-item"><div class="document-title"><div><strong>${escapeHtml(doc.file_name)}</strong><span>${escapeHtml(doc.document_type)}</span></div><span class="confidence">${confidence}</span></div><p class="document-summary">${escapeHtml(doc.summary)}</p>${fields ? `<dl class="field-table">${fields}</dl>` : ""}${warnings}</article>`;
+    return `<div><strong>${escapeHtml(doc.file_name)}</strong> · ${escapeHtml(doc.document_type)} · ${confidence}<p>${escapeHtml(doc.summary)}</p>${fields ? `<dl>${fields}</dl>` : ""}${warnings}</div>`;
   }).join("");
 }
 
-async function uploadFiles(files) {
-  if (!files.length) return;
-  if (files.length > 6) { toast("每次最多上传 6 个附件"); return; }
+function renderPendingFiles() {
+  const container = $("pendingFiles");
+  container.hidden = !state.pendingFiles.length;
+  container.innerHTML = state.pendingFiles.map((file, index) => `<div class="file-chip"><span>${escapeHtml(file.name)}</span><button type="button" data-index="${index}" aria-label="移除 ${escapeHtml(file.name)}">×</button></div>`).join("");
+  container.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
+    state.pendingFiles.splice(Number(button.dataset.index), 1);
+    renderPendingFiles();
+  }));
+}
+
+function selectFiles(files) {
+  const selected = [...files];
+  if (state.pendingFiles.length + selected.length > 6) { toast("每轮最多上传 6 个附件"); return; }
+  const tooLarge = selected.find((file) => file.size > 10 * 1024 * 1024);
+  if (tooLarge) { toast(`${tooLarge.name} 超过 10MB`); return; }
+  state.pendingFiles.push(...selected);
+  renderPendingFiles();
+  $("fileInput").value = "";
+}
+
+async function analyzeFiles(files) {
+  if (!files.length) return [];
   const form = new FormData();
-  [...files].forEach((file) => form.append("files", file));
-  $("documentList").insertAdjacentHTML("afterbegin", `<div class="loading-row">正在识别 ${files.length} 份附件…</div>`);
-  try {
-    const response = await api("/api/documents/analyze", { method: "POST", body: form });
-    const result = await response.json();
-    state.documents.push(...result.documents);
-    renderDocuments();
-    toast("单证识别完成");
-  } catch (error) {
-    renderDocuments();
-    toast(error.message);
-  } finally {
-    $("fileInput").value = "";
+  files.forEach((file) => form.append("files", file));
+  const response = await api("/api/documents/analyze", { method: "POST", body: form });
+  return (await response.json()).documents;
+}
+
+async function streamAnswer(question, newDocuments, article) {
+  const answer = article.querySelector(".bubble p");
+  const intent = article.querySelector(".intent");
+  const response = await api("/api/assistant/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, documents: state.documents, history: state.history.slice(-12) }),
+  });
+  answer.textContent = "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const event of events) {
+      const line = event.split("\n").find((item) => item.startsWith("data: "));
+      if (!line) continue;
+      const data = JSON.parse(line.slice(6));
+      if (data.error) throw new Error(data.error);
+      if (data.intent) {
+        intent.hidden = false;
+        intent.textContent = `${data.intent} · ${Math.round(data.intent_confidence * 100)}%`;
+      }
+      if (data.content) answer.textContent += data.content;
+    }
+    scrollToBottom();
   }
+  if (!answer.textContent) answer.textContent = "模型未返回有效内容，请稍后重试。";
+  renderDocumentDetails(article.querySelector(".document-details"), newDocuments);
+  state.history.push({ role: "user", content: question }, { role: "assistant", content: answer.textContent });
 }
 
-async function submitClaim() {
-  const payload = {
-    claim_id: $("claimId").value.trim(),
-    description: $("description").value.trim(),
-  };
-  const policyId = $("policyId").value.trim();
-  const amount = $("amount").value.trim();
-  if (policyId) payload.policy_id = policyId;
-  if (amount) payload.amount = amount;
-  if (!payload.claim_id || !payload.description) { toast("请填写案件编号和事故说明"); return; }
-  const button = $("submitClaim");
-  button.disabled = true;
-  try {
-    const response = await api("/api/claims/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    const result = await response.json();
-    $("claimStatus").hidden = false;
-    $("statusLabel").textContent = result.phase.replaceAll("_", " ");
-    $("statusMessage").textContent = result.message;
-    toast("案件状态已更新");
-  } catch (error) { toast(error.message); }
-  finally { button.disabled = false; }
-}
-
-function addMessage(role, content, extraClass = "") {
-  const node = document.createElement("div");
-  node.className = `message ${role} ${extraClass}`.trim();
-  node.textContent = content;
-  $("chatMessages").appendChild(node);
-  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
-  return node;
-}
-
-async function ask(question) {
-  if (!question || state.busy) return;
+async function sendMessage(rawQuestion) {
+  if (state.busy) return;
+  const files = [...state.pendingFiles];
+  const question = rawQuestion.trim() || (files.length ? "请识别并总结我上传的理赔单证。" : "");
+  if (!question) return;
   state.busy = true;
   $("sendQuestion").disabled = true;
-  addMessage("user", question);
-  const answer = addMessage("assistant", "正在思考…");
+  state.pendingFiles = [];
+  renderPendingFiles();
+  addUserMessage(question, files);
+  const article = addAssistantMessage();
   try {
-    const response = await api("/api/assistant/stream", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, claim_id: $("claimId").value.trim() || null, documents: state.documents, history: state.history.slice(-12) }),
-    });
-    answer.textContent = "";
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split("\n\n");
-      buffer = events.pop() || "";
-      for (const event of events) {
-        const line = event.split("\n").find((item) => item.startsWith("data: "));
-        if (!line) continue;
-        const data = JSON.parse(line.slice(6));
-        if (data.error) throw new Error(data.error);
-        if (data.content) answer.textContent += data.content;
-      }
-      $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
-    }
-    if (!answer.textContent) answer.textContent = "模型未返回有效内容，请稍后重试。";
-    state.history.push({ role: "user", content: question }, { role: "assistant", content: answer.textContent });
+    const documents = await analyzeFiles(files);
+    state.documents.push(...documents);
+    await streamAnswer(question, documents, article);
   } catch (error) {
-    answer.textContent = error.message;
-    answer.classList.add("error");
+    article.classList.add("error");
+    article.querySelector(".bubble p").textContent = error.message;
   } finally {
     state.busy = false;
     $("sendQuestion").disabled = false;
+    scrollToBottom();
   }
 }
 
-const dropZone = $("dropZone");
-dropZone.addEventListener("click", () => $("fileInput").click());
-dropZone.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); $("fileInput").click(); } });
-dropZone.addEventListener("dragover", (event) => { event.preventDefault(); dropZone.classList.add("dragging"); });
-dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragging"));
-dropZone.addEventListener("drop", (event) => { event.preventDefault(); dropZone.classList.remove("dragging"); uploadFiles(event.dataTransfer.files); });
-$("fileInput").addEventListener("change", (event) => uploadFiles(event.target.files));
-$("submitClaim").addEventListener("click", submitClaim);
-$("newCase").addEventListener("click", () => {
-  ["claimId", "policyId", "amount", "description"].forEach((id) => { $(id).value = ""; });
-  $("claimStatus").hidden = true;
-  state.documents = [];
-  renderDocuments();
+$("attachButton").addEventListener("click", () => $("fileInput").click());
+$("fileInput").addEventListener("change", (event) => selectFiles(event.target.files));
+$("chatForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const input = $("question");
+  const value = input.value;
+  input.value = "";
+  input.style.height = "auto";
+  sendMessage(value);
 });
-$("chatForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("question"); const value = input.value.trim(); input.value = ""; ask(value); });
-$("clearChat").addEventListener("click", () => { state.history = []; $("chatMessages").innerHTML = '<div class="message assistant">对话已清空。你可以继续询问当前案件或已识别单证。</div>'; });
-document.querySelectorAll(".suggestions button").forEach((button) => button.addEventListener("click", () => ask(button.textContent.trim())));
+$("question").addEventListener("input", (event) => {
+  event.target.style.height = "auto";
+  event.target.style.height = `${Math.min(event.target.scrollHeight, 150)}px`;
+});
+$("question").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    $("chatForm").requestSubmit();
+  }
+});
+$("newChat").addEventListener("click", () => {
+  state.documents = [];
+  state.history = [];
+  state.pendingFiles = [];
+  renderPendingFiles();
+  $("chatMessages").innerHTML = '<article class="message assistant"><div class="avatar" aria-hidden="true">理</div><div class="message-body"><div class="bubble"><p>新对话已开始。请描述你的问题或上传理赔单证。</p></div></div></article>';
+});
+document.querySelectorAll(".quick-actions button").forEach((button) => button.addEventListener("click", () => sendMessage(button.textContent)));
 
 checkHealth();
-renderDocuments();

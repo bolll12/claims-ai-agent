@@ -45,3 +45,18 @@ class AssistantRequest(BaseModel):
     claim_id: str | None = Field(default=None, max_length=64)
     documents: list[DocumentAnalysis] = Field(default_factory=list, max_length=6)
     history: list[ChatTurn] = Field(default_factory=list, max_length=12)
+
+
+class IntentResult(BaseModel):
+    """模型对当前用户消息的意图识别结果。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    intent: Literal[
+        "理赔报案",
+        "材料审核",
+        "进度查询",
+        "条款咨询",
+        "补充材料",
+        "一般咨询",
+    ]
+    confidence: float = Field(ge=0, le=1)

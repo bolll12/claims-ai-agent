@@ -22,7 +22,7 @@ from agents.middleware_audit import configure_logging, mask_pii, RateLimitMiddle
 from agents.observability import tracing_config
 from config import ClaimLLMFactory, get_model
 from models.schemas import ClaimRequest, ClaimResponse
-from models.workbench import AssistantRequest, DocumentBatchResponse
+from models.workbench import AssistantRequest, DocumentBatchResponse, IntentResult
 from monitoring import metrics, REQUESTS, ERRORS, LATENCY, CONFIDENCE, ITERATIONS, TOKENS
 from settings import Settings
 from tools.document_analysis import (
@@ -57,6 +57,7 @@ def create_app(
     document_text_model: Any = None,
     document_vision_model: Any = None,
     assistant_model: Any = None,
+    intent_model: Any = None,
 ) -> FastAPI:
     cfg = Settings()
     backend = DemoBackend() if cfg.business_mode == 'demo' else BusinessBackend()
@@ -254,9 +255,26 @@ def create_app(
             messages.append(message_type(content=mask_pii(turn.content)))
         messages.append(HumanMessage(content=mask_pii(body.question)))
         llm = assistant_model or get_model('customer_service')
+        classifier = intent_model or get_model('classification')
 
         async def events():
             try:
+                intent_response = await classifier.ainvoke([
+                    SystemMessage(content=(
+                        '你是理赔对话意图分类器。只能返回JSON对象，包含intent和confidence。'
+                        'intent只能是：理赔报案、材料审核、进度查询、条款咨询、补充材料、一般咨询。'
+                        '结合用户问题和是否携带附件判断，不输出解释或Markdown。'
+                    )),
+                    HumanMessage(content=(
+                        f'用户问题：{mask_pii(body.question)}\n'
+                        f'本轮上下文包含{len(body.documents)}份已识别单证。'
+                    )),
+                ])
+                raw_intent = chat_content(intent_response).strip()
+                if raw_intent.startswith('```'):
+                    raw_intent = raw_intent.removeprefix('```json').removeprefix('```').removesuffix('```').strip()
+                intent = IntentResult.model_validate_json(raw_intent)
+                yield f"data: {json.dumps({'intent': intent.intent, 'intent_confidence': intent.confidence}, ensure_ascii=False)}\n\n"
                 async for chunk in llm.astream(messages):
                     content = chat_content(chunk)
                     if content:
@@ -264,7 +282,7 @@ def create_app(
                 yield f"data: {json.dumps({'done': True})}\n\n"
             except Exception:
                 ERRORS.labels('assistant_model').inc()
-                yield f"data: {json.dumps({'error': '问答模型暂不可用，请检查本地推理服务'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'error': '意图识别或问答模型暂不可用，请检查本地推理服务'}, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(
             events(),
