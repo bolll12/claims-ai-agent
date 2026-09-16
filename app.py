@@ -245,6 +245,15 @@ def create_app(
             ensure_ascii=False,
         )
         classifier = intent_model or get_model('classification')
+        recent_history = [
+            {
+                'role': turn.role,
+                'content': mask_pii(turn.content[-1000:]),
+                'intent': turn.intent,
+            }
+            for turn in body.history[-6:]
+        ]
+        classification_context = json.dumps(recent_history, ensure_ascii=False)
 
         def conversation(system_prompt: str) -> list[Any]:
             messages: list[Any] = [SystemMessage(content=system_prompt)]
@@ -260,11 +269,20 @@ def create_app(
                     SystemMessage(content=(
                         '你是理赔对话意图分类器。只能返回JSON对象，包含intent和confidence。'
                         'intent只能是：理赔报案、材料审核、进度查询、条款咨询、补充材料、一般咨询。'
-                        '结合用户问题和是否携带附件判断，不输出解释或Markdown。'
+                        '必须结合最近对话、上一轮意图、当前问题和附件判断。'
+                        '如果当前问题是省略主语的追问，继承最近仍在讨论的主题；'
+                        '如果用户明确切换主题，以当前问题为准。不要仅因历史出现理赔词就忽略新主题。'
+                        '分类边界：描述事故或询问如何发起申请属于理赔报案；'
+                        '询问需要、缺少、上传或补交哪些资料属于补充材料；'
+                        '要求检查已上传单证的内容、完整性或真伪属于材料审核；'
+                        '询问案件目前处理到哪里属于进度查询；询问保障责任或具体条款属于条款咨询。'
+                        '例如上一轮讨论交通事故理赔，当前问“那要准备什么”或“还缺哪些”，应分类为补充材料。'
+                        '不输出解释或Markdown。'
                     )),
                     HumanMessage(content=(
-                        f'用户问题：{mask_pii(body.question)}\n'
-                        f'本轮上下文包含{len(body.documents)}份已识别单证。'
+                        f'最近对话：{classification_context}\n'
+                        f'当前问题：{mask_pii(body.question)}\n'
+                        f'当前会话共有{len(body.documents)}份已识别单证。'
                     )),
                 ])
                 raw_intent = chat_content(intent_response).strip()

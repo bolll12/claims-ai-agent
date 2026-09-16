@@ -1,6 +1,6 @@
 """理赔工作台的单证识别与问答契约。"""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,6 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field
 FieldName = Annotated[str, Field(min_length=1, max_length=50)]
 FieldValue = Annotated[str, Field(max_length=300)]
 WarningText = Annotated[str, Field(min_length=1, max_length=500)]
+IntentName: TypeAlias = Literal[
+    "理赔报案",
+    "材料审核",
+    "进度查询",
+    "条款咨询",
+    "补充材料",
+    "一般咨询",
+]
 
 
 class DocumentAnalysis(BaseModel):
@@ -35,6 +43,7 @@ class ChatTurn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=4000)
+    intent: IntentName | None = None
 
 
 class AssistantRequest(BaseModel):
@@ -51,12 +60,5 @@ class IntentResult(BaseModel):
     """模型对当前用户消息的意图识别结果。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    intent: Literal[
-        "理赔报案",
-        "材料审核",
-        "进度查询",
-        "条款咨询",
-        "补充材料",
-        "一般咨询",
-    ]
+    intent: IntentName
     confidence: float = Field(ge=0, le=1)

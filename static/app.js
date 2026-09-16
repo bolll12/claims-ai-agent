@@ -113,6 +113,7 @@ async function streamAnswer(question, newDocuments, article) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let detectedIntent = null;
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -125,6 +126,7 @@ async function streamAnswer(question, newDocuments, article) {
       const data = JSON.parse(line.slice(6));
       if (data.error) throw new Error(data.error);
       if (data.intent) {
+        detectedIntent = data.intent;
         intent.hidden = false;
         intent.textContent = `${data.intent} · ${Math.round(data.intent_confidence * 100)}%`;
       }
@@ -134,7 +136,10 @@ async function streamAnswer(question, newDocuments, article) {
   }
   if (!answer.textContent) answer.textContent = "模型未返回有效内容，请稍后重试。";
   renderDocumentDetails(article.querySelector(".document-details"), newDocuments);
-  state.history.push({ role: "user", content: question }, { role: "assistant", content: answer.textContent });
+  state.history.push(
+    { role: "user", content: question },
+    { role: "assistant", content: answer.textContent, intent: detectedIntent },
+  );
 }
 
 async function sendMessage(rawQuestion) {
