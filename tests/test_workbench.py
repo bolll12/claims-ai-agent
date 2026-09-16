@@ -12,10 +12,15 @@ from app import create_app
 class FakeWorkbenchModel:
     """只验证应用协议，不连接外部推理服务。"""
 
+    def __init__(self) -> None:
+        self.stream_system_prompts: list[str] = []
+
     async def ainvoke(self, messages: list[Any]) -> AIMessage:
         if '意图分类器' in messages[0].content:
+            general = 'Python' in messages[-1].content
             return AIMessage(content=json.dumps({
-                'intent': '材料审核', 'confidence': 0.93,
+                'intent': '一般咨询' if general else '材料审核',
+                'confidence': 0.93,
             }, ensure_ascii=False))
         return AIMessage(content=json.dumps({
             'document_type': '医疗费用发票',
@@ -26,6 +31,7 @@ class FakeWorkbenchModel:
         }, ensure_ascii=False))
 
     async def astream(self, messages: list[Any]):
+        self.stream_system_prompts.append(messages[0].content)
         yield AIMessage(content='请补充')
         yield AIMessage(content='费用清单。')
 
@@ -64,6 +70,7 @@ def test_text_document_analysis_and_streaming_question() -> None:
         assert response.status_code == 200
         assert '请补充' in response.text and '费用清单' in response.text
         assert '材料审核' in response.text
+        assert '保险理赔客服助手' in model.stream_system_prompts[-1]
         assert response.headers['content-type'].startswith('text/event-stream')
 
 
@@ -77,3 +84,21 @@ def test_document_validation_rejects_unsupported_and_mismatched_files() -> None:
         mismatched = client.post('/api/documents/analyze', files={'files': ('fake.pdf', b'not-pdf', 'application/pdf')})
         assert unsupported.status_code == 422
         assert mismatched.status_code == 422
+
+
+def test_general_intent_routes_to_base_model_prompt() -> None:
+    model = FakeWorkbenchModel()
+    with TestClient(create_app(
+        database=':memory:', document_text_model=model,
+        document_vision_model=model, assistant_model=model,
+        intent_model=model, general_model=model,
+    )) as client:
+        response = client.post('/api/assistant/stream', json={
+            'question': 'Python列表推导式是什么？',
+            'documents': [], 'history': [],
+        })
+        assert response.status_code == 200
+        assert '一般咨询' in response.text
+        assert model.stream_system_prompts
+        assert '通用智能助手' in model.stream_system_prompts[-1]
+        assert '保险理赔客服助手' not in model.stream_system_prompts[-1]
