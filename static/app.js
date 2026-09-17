@@ -1,4 +1,4 @@
-const state = { claimId: null, documents: [], history: [], pendingFiles: [], busy: false };
+const state = { claimId: null, documents: [], history: [], pendingFiles: [], busy: false, isDemo: false };
 const $ = (id) => document.getElementById(id);
 
 function toast(message) {
@@ -85,9 +85,17 @@ function renderPendingFiles() {
 
 function selectFiles(files) {
   const selected = [...files];
+  if (!selected.length) return;
   if (state.pendingFiles.length + selected.length > 6) { toast("每轮最多上传 6 个附件"); return; }
   const tooLarge = selected.find((file) => file.size > 10 * 1024 * 1024);
   if (tooLarge) { toast(`${tooLarge.name} 超过 10MB`); return; }
+  if (state.isDemo) {
+    state.claimId = null;
+    state.documents = [];
+    state.history = [];
+    state.isDemo = false;
+    toast("已退出演示案件，将使用真实附件解析");
+  }
   state.pendingFiles.push(...selected);
   renderPendingFiles();
   $("fileInput").value = "";
@@ -168,7 +176,7 @@ async function sendMessage(rawQuestion) {
   try {
     const uploadStarted = performance.now();
     const documents = await analyzeFiles(files);
-    if (files.length) traceNode("documents", "done", `${documents.length} 份附件 · ${Math.round(performance.now() - uploadStarted)} ms（含传输）`);
+    if (files.length) traceNode("documents", "done", `${documents.length} 份真实附件 · ${Math.round(performance.now() - uploadStarted)} ms（含模型识别）`);
     if (files.length) setTraceParams("documents", undefined, {documents});
     state.documents.push(...documents);
     state.documents = state.documents.slice(-6);
@@ -202,6 +210,7 @@ async function runDemoClaim() {
     state.claimId = data.claim.claim_id;
     state.documents = data.documents;
     state.history = [];
+    state.isDemo = true;
     traceNode("input", "done", `合成案件 ${data.claim.claim_id}`);
     setTraceParams("input", {source: "本地合成演示数据"}, data.claim);
     traceNode("documents", "done", `${data.documents.length} 份合成单证`);
@@ -264,6 +273,7 @@ $("newChat").addEventListener("click", () => {
   state.claimId = null;
   state.documents = [];
   state.history = [];
+  state.isDemo = false;
   state.pendingFiles = [];
   renderPendingFiles();
   $("chatMessages").innerHTML = '<article class="message assistant"><div class="avatar" aria-hidden="true">理</div><div class="message-body"><div class="bubble"><p>新对话已开始。请描述你的问题或上传理赔单证。</p></div></div></article>';

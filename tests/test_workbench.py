@@ -1,6 +1,7 @@
 """理赔工作台页面、单证识别和流式问答测试。"""
 
 import json
+import base64
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ class FakeWorkbenchModel:
     def __init__(self) -> None:
         self.stream_system_prompts: list[str] = []
         self.classification_inputs: list[str] = []
+        self.document_inputs: list[Any] = []
 
     async def ainvoke(self, messages: list[Any]) -> AIMessage:
         if '意图分类器' in messages[0].content:
@@ -26,6 +28,7 @@ class FakeWorkbenchModel:
                 'intent': '一般咨询' if general else '补充材料' if follow_up else '材料审核',
                 'confidence': 0.93,
             }, ensure_ascii=False))
+        self.document_inputs.append(messages[-1].content)
         return AIMessage(content=json.dumps({
             'document_type': '医疗费用发票',
             'summary': '合成测试发票，仅用于验证接口。',
@@ -49,7 +52,7 @@ def test_workbench_page_and_assets() -> None:
         page = client.get('/')
         assert page.status_code == 200
         assert '理赔智能助手' in page.text
-        assert '演示案件' in page.text
+        assert '载入演示' in page.text
         assert client.get('/static/styles.css').status_code == 200
 
 
@@ -86,6 +89,7 @@ def test_text_document_analysis_and_streaming_question() -> None:
         document = analyzed.json()['documents'][0]
         assert document['document_type'] == '医疗费用发票'
         assert document['fields']['金额'] == '128.00'
+        assert '医疗费用合计128元' in model.document_inputs[-1]
 
         response = client.post('/api/assistant/stream', json={
             'question': '还缺什么材料？', 'claim_id': 'CLM-TEST-001',
@@ -118,6 +122,26 @@ def test_text_document_analysis_and_streaming_question() -> None:
         assert traces[-1]['output']['content'] == '请补充费用清单。'
         assert '保险理赔客服助手' in model.stream_system_prompts[-1]
         assert response.headers['content-type'].startswith('text/event-stream')
+
+
+def test_image_upload_sends_real_data_url_to_vision_model() -> None:
+    model = FakeWorkbenchModel()
+    image = base64.b64decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    )
+    with TestClient(create_app(
+        database=':memory:', document_text_model=model,
+        document_vision_model=model, assistant_model=model, intent_model=model,
+    )) as client:
+        response = client.post(
+            '/api/documents/analyze',
+            files={'files': ('evidence.png', image, 'image/png')},
+        )
+        assert response.status_code == 200
+        content = model.document_inputs[-1]
+        assert isinstance(content, list)
+        assert content[0]['text'] == '识别这份理赔附件：evidence.png'
+        assert content[1]['image_url']['url'].startswith('data:image/png;base64,')
 
 
 def test_document_validation_rejects_unsupported_and_mismatched_files() -> None:

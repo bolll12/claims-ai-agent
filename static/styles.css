@@ -33,8 +33,8 @@ button { cursor: pointer; }
 .new-chat:hover { border-color: var(--green); color: var(--green); }
 .new-chat span { margin-right: 5px; font-size: 17px; vertical-align: -1px; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
-.demo-case { color: white; border-color: var(--green); background: var(--green); }
-.demo-case:hover { color: white; border-color: var(--green-dark); background: var(--green-dark); }
+.demo-case { color: var(--green); border-color: #9abdad; background: #f7fbf9; }
+.demo-case:hover { color: var(--green-dark); border-color: var(--green); background: var(--green-soft); }
 .new-chat:disabled { cursor: wait; opacity: .55; }
 .chat-shell { min-height: 100%; display: flex; flex-direction: column; padding: 68px 20px 154px; }
 .messages { width: min(820px, 100%); margin: 0 auto; padding: 42px 0 54px; }
