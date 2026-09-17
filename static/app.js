@@ -222,7 +222,14 @@ document.querySelectorAll(".quick-actions button").forEach((button) => button.ad
 const traceNames = {
   input: "接收消息", documents: "附件识别", classification: "多轮意图识别",
   route: "选择回答链路", claims: "理赔智能体", general: "通用基模", output: "返回回答",
+  claim_intake: "报案信息核查", claim_documents: "理赔单证核查", claim_policy: "保单与责任核验",
+  claim_damage: "损失专家", claim_risk: "风险专家", claim_liability: "责任专家",
+  claim_confidence: "置信度计算", claim_decision: "审核决策路由",
 };
+const claimTraceNodes = [
+  "claim_intake", "claim_documents", "claim_policy", "claim_damage", "claim_risk",
+  "claim_liability", "claim_confidence", "claim_decision",
+];
 function setTraceParams(id, input, output) {
   const node = document.querySelector(`[data-node="${id}"]`);
   if (!node) return;
@@ -248,16 +255,19 @@ function traceNode(id, status, detail = "") {
 const traceDetails = {};
 function resetTrace() {
   Object.keys(traceDetails).forEach(key => delete traceDetails[key]);
-  const node = id => `<div class="trace-node" data-node="${id}"><div class="node-head"><strong>${traceNames[id]}</strong><span class="node-state">等待</span></div><small>等待本轮执行</small><details class="trace-params"><summary>输入 / 输出参数</summary><h3>输入</h3><pre data-param="input">尚未调用</pre><h3>输出</h3><pre data-param="output">尚无输出</pre></details></div>`;
+  const node = (id, extraClass = "") => `<div class="trace-node ${extraClass}" data-node="${id}"><div class="node-head"><strong>${traceNames[id]}</strong><span class="node-state">等待</span></div><small>等待本轮执行</small><details class="trace-params"><summary>输入 / 输出参数</summary><h3>输入</h3><pre data-param="input">尚未调用</pre><h3>输出</h3><pre data-param="output">尚无输出</pre></details></div>`;
   const arrow = '<div class="trace-arrow" aria-hidden="true">↓</div>';
+  const expertRow = `<div class="trace-parallel"><span>并行分析</span><div class="trace-experts">${["claim_damage", "claim_risk", "claim_liability"].map(id => node(id, "compact")).join("")}</div></div>`;
+  const claimDetail = `<section id="claimTraceDetail" class="claim-trace-detail"><header><strong>理赔状态机明细</strong><span>对话预审 / 正式核赔节点</span></header>${node("claim_intake")}${arrow}${node("claim_documents")}${arrow}${node("claim_policy")}${arrow}${expertRow}${arrow}${node("claim_confidence")}${arrow}${node("claim_decision")}</section>`;
   $("traceGraph").innerHTML = ["input", "documents", "classification", "route"].map(node).join(arrow)
-    + arrow + '<div class="trace-branches">' + node("claims") + node("general") + '</div>' + arrow + node("output");
+    + arrow + '<div class="trace-branches">' + node("claims") + node("general") + '</div>'
+    + claimDetail + arrow + node("output");
   $("traceStatus").textContent = "等待提问";
 }
 function updateTrace(event) {
   traceDetails[event.node] = { ...traceDetails[event.node], ...event };
   event = traceDetails[event.node];
-  const detail = [event.model, event.intent,
+  const detail = [event.summary, event.model, event.intent,
     event.history_count != null ? `参考 ${event.history_count} 条历史消息` : "",
     event.elapsed_ms != null ? `${event.elapsed_ms} ms` : ""].filter(Boolean).join(" · ");
   traceNode(event.node, event.status, detail);
@@ -268,6 +278,11 @@ function updateTrace(event) {
   if (event.node === "route") {
     traceNode("route", "done", event.selected === "general" ? "一般咨询 → 通用基模" : "理赔意图 → 理赔智能体");
     traceNode(event.selected === "general" ? "claims" : "general", "skipped", "本轮未选择此链路");
+    const detail = $("claimTraceDetail");
+    detail.classList.toggle("inactive", event.selected === "general");
+    if (event.selected === "general") {
+      claimTraceNodes.forEach(id => traceNode(id, "skipped", "一般咨询未进入理赔状态机"));
+    }
   }
   if (["claims", "general"].includes(event.node) && event.status === "running") traceNode("output", "running", "等待并接收流式回答");
 }

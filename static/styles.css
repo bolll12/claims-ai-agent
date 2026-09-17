@@ -122,6 +122,19 @@ button { cursor: pointer; }
 .trace-node.skipped { opacity: .6; border-style: dashed; }
 .trace-arrow { height: 25px; display: grid; place-items: center; color: #8b9d90; font-size: 18px; }
 .trace-branches { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; position: relative; }
+.claim-trace-detail { margin-top: 14px; padding: 14px; border: 1px solid #cbd7cf; border-radius: 8px; background: #e9efeb; }
+.claim-trace-detail > header { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.claim-trace-detail > header strong { font-size: 13px; }
+.claim-trace-detail > header span { color: var(--muted); font-size: 10px; text-align: right; }
+.claim-trace-detail.inactive { opacity: .58; }
+.trace-parallel { position: relative; padding-top: 18px; }
+.trace-parallel > span { position: absolute; top: 0; left: 50%; padding: 1px 7px; border-radius: 10px; color: #67746b; background: #dce5df; font-size: 10px; transform: translateX(-50%); }
+.trace-experts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.trace-node.compact { padding: 9px; }
+.trace-node.compact .node-head { align-items: flex-start; flex-direction: column; gap: 3px; }
+.trace-node.compact strong { font-size: 11px; }
+.trace-node.compact small, .trace-node.compact .node-state, .trace-node.compact .trace-params summary { font-size: 9px; }
+.trace-node.compact .trace-params pre { font-size: 9px; padding: 7px; }
 .trace-footer { display: flex; justify-content: center; gap: 20px; padding: 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 @media (max-width: 760px) {
   .split-workspace { grid-template-columns: minmax(0, 1fr); height: auto; padding-top: 62px; }
@@ -129,6 +142,7 @@ button { cursor: pointer; }
   .trace-panel { min-height: 600px; border-top: 1px solid var(--line); }
   .messages { padding: 22px 13px; }
   .composer-wrap { padding: 10px; }
+  .trace-experts { grid-template-columns: 1fr; }
 }
 
 .trace-node.done, .trace-node.running { background: #10543e; border-color: #10543e; color: #e0f3e9; }

@@ -78,14 +78,23 @@ def test_text_document_analysis_and_streaming_question() -> None:
         traces = [event['trace'] for event in events if 'trace' in event]
         assert [(event['node'], event['status']) for event in traces] == [
             ('classification', 'running'), ('classification', 'done'),
-            ('route', 'done'), ('claims', 'running'), ('claims', 'done'),
+            ('route', 'done'),
+            ('claim_intake', 'done'), ('claim_documents', 'done'),
+            ('claim_policy', 'skipped'), ('claim_damage', 'skipped'),
+            ('claim_risk', 'skipped'), ('claim_liability', 'skipped'),
+            ('claim_confidence', 'skipped'), ('claim_decision', 'skipped'),
+            ('claims', 'running'), ('claims', 'done'),
         ]
         assert traces[2]['selected'] == 'claims'
         assert traces[-1]['elapsed_ms'] >= 0
         assert traces[0]['input']['messages'][-1]['role'] == 'human'
         assert traces[1]['output']['intent'] == '材料审核'
         assert traces[2]['output']['selected'] == 'claims'
-        assert traces[3]['input']['messages'][-1]['content'] == '还缺什么材料？'
+        assert traces[3]['output']['check_type'] == '对话预审'
+        assert traces[4]['output']['average_extraction_confidence'] == 0.96
+        assert traces[9]['input']['method'] == 'min(expert_confidence)'
+        assert traces[9]['output']['executed'] is False
+        assert traces[11]['input']['messages'][-1]['content'] == '还缺什么材料？'
         assert traces[-1]['output']['content'] == '请补充费用清单。'
         assert '保险理赔客服助手' in model.stream_system_prompts[-1]
         assert response.headers['content-type'].startswith('text/event-stream')

@@ -328,6 +328,100 @@ def create_app(
                     )
                 stage = 'general' if intent.intent == '一般咨询' else 'claims'
                 yield trace('route', 'done', selected=stage, input=intent.model_dump(), output={'selected': stage, 'model': getattr(llm, 'model_name', '测试模型')})
+                if stage == 'claims':
+                    extracted_fields = {
+                        key.replace('_', '').replace(' ', '').lower(): value
+                        for document in body.documents
+                        for key, value in document.fields.items()
+                        if value
+                    }
+                    def extracted(*aliases: str) -> str | None:
+                        return next((str(extracted_fields[alias]) for alias in aliases if alias in extracted_fields), None)
+                    observed_claim_id = body.claim_id or extracted('claimid', '案件号', '报案号', '理赔号')
+                    observed_policy_id = extracted('policyid', '保单号', '保单编号')
+                    observed_amount = extracted('amount', '金额', '费用合计', '索赔金额', '报案金额')
+                    document_confidences = [
+                        document.confidence for document in body.documents
+                        if document.confidence is not None
+                    ]
+                    missing_fields = [
+                        field for field, present in (
+                            ('claim_id', bool(observed_claim_id)),
+                            ('policy_id', bool(observed_policy_id)),
+                            ('amount', bool(observed_amount)),
+                        ) if not present
+                    ]
+                    yield trace(
+                        'claim_intake', 'done',
+                        summary=(
+                            f'已核查，缺少 {len(missing_fields)} 项正式字段'
+                            if missing_fields else '报案字段完整，可提交正式工作流'
+                        ),
+                        input={
+                            'claim_id': observed_claim_id,
+                            'question': body.question,
+                            'document_count': len(body.documents),
+                        },
+                        output={
+                            'check_type': '对话预审',
+                            'description_present': bool(body.question.strip()),
+                            'missing_structured_fields': missing_fields,
+                            'ready_for_formal_workflow': not missing_fields,
+                        },
+                    )
+                    document_status = 'done' if body.documents else 'skipped'
+                    yield trace(
+                        'claim_documents', document_status,
+                        summary=(
+                            f'已核查 {len(body.documents)} 份单证'
+                            if body.documents else '本轮没有可核查单证'
+                        ),
+                        input={'documents': [document.model_dump() for document in body.documents]},
+                        output={
+                            'recognized_count': len(body.documents),
+                            'average_extraction_confidence': (
+                                round(sum(document_confidences) / len(document_confidences), 4)
+                                if document_confidences else None
+                            ),
+                            'warning_count': sum(len(document.warnings) for document in body.documents),
+                            'reason': None if body.documents else '本轮没有可核查单证',
+                        },
+                    )
+                    deferred_nodes = (
+                        ('claim_policy', {
+                            'policy_id': observed_policy_id,
+                            'required': [] if observed_policy_id else ['policy_id'],
+                            'checks': ['保单状态', '保障责任', '免责条款', '证据一致性'],
+                        }, '聊天预审不提交正式核赔，未调用业务保单接口'),
+                        ('claim_damage', {
+                            'role': 'damage', 'requires': ['verified_policy', 'claim_amount', 'documents'],
+                        }, '等待已核实保单与报案金额后执行损失专家'),
+                        ('claim_risk', {
+                            'role': 'risk', 'requires': ['verified_policy', 'claim_history', 'documents'],
+                        }, '等待业务核验结果后执行风险专家'),
+                        ('claim_liability', {
+                            'role': 'liability', 'requires': ['verified_policy', 'accident_evidence'],
+                        }, '等待事故证据核验后执行责任专家'),
+                        ('claim_confidence', {
+                            'method': 'min(expert_confidence)',
+                            'required_experts': ['damage', 'risk', 'liability'],
+                            'observed_precheck_scores': {
+                                'intent': intent.confidence,
+                                'document_extraction': document_confidences,
+                            },
+                        }, '三位专家尚未执行，不生成正式核赔置信度'),
+                        ('claim_decision', {
+                            'rules': [
+                                '高风险转调查', '金额超过50000转人工',
+                                '保障责任未核实转人工', '置信度不高于0.9转人工',
+                            ],
+                        }, '正式置信度和核验结果缺失，未执行审核路由'),
+                    )
+                    for node, node_input, reason in deferred_nodes:
+                        yield trace(node, 'skipped', summary=reason, input=node_input, output={
+                            'executed': False,
+                            'reason': reason,
+                        })
                 started = time.monotonic()
                 yield trace(stage, 'running', model=getattr(llm, 'model_name', '回答模型'), input=model_inputs(llm, messages))
                 answer_parts: list[str] = []
