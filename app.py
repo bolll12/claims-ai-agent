@@ -22,7 +22,7 @@ from agents.middleware_audit import configure_logging, mask_pii, RateLimitMiddle
 from agents.observability import tracing_config
 from config import ClaimLLMFactory, get_model
 from models.schemas import ClaimRequest, ClaimResponse
-from models.workbench import AssistantRequest, DocumentBatchResponse, IntentResult
+from models.workbench import AssistantRequest, DemoClaimRunResponse, DocumentBatchResponse, IntentResult
 from monitoring import metrics, REQUESTS, ERRORS, LATENCY, CONFIDENCE, ITERATIONS, TOKENS
 from settings import Settings
 from tools.document_analysis import (
@@ -171,6 +171,56 @@ def create_app(
     @application.get('/metrics', dependencies=[Depends(authenticate)])
     async def export_metrics() -> Response:
         return Response(content=metrics(), media_type='text/plain; version=0.0.4')
+
+    @application.post('/api/demo/claims/process', response_model=DemoClaimRunResponse, tags=['本地演示'])
+    async def process_demo_claim() -> DemoClaimRunResponse:
+        """使用固定合成数据运行真实状态机，不连接真实业务或执行付款。"""
+        if cfg.app_env == 'production':
+            raise HTTPException(404, '演示接口在生产环境不可用')
+        from claims_agent import DemoServices
+        from demos.mock_claim import build_mock_claim
+
+        claim, documents = build_mock_claim()
+        claim_data = claim.model_dump(mode='json')
+        graph = build_claim_graph(DemoServices())
+        state = await graph.ainvoke(
+            {'claim_id': claim.claim_id, 'claim_data': claim_data, 'rounds': 0, 'expert_results': []},
+            config={'configurable': {'thread_id': claim.claim_id}, 'recursion_limit': 30, 'max_concurrency': 3},
+        )
+        opinions = {item['expert']: item for item in state['expert_results']}
+        trace = [
+            {'node': 'claim_intake', 'status': 'done', 'summary': '报案字段完整，可提交正式工作流',
+             'input': claim_data, 'output': {'phase': 'ready', 'missing_structured_fields': []}},
+            {'node': 'claim_documents', 'status': 'done', 'summary': '已核查 1 份合成单证',
+             'input': {'documents': [item.model_dump() for item in documents]},
+             'output': {'recognized_count': 1, 'average_extraction_confidence': 0.97, 'warning_count': 0}},
+            {'node': 'claim_policy', 'status': 'done', 'summary': '演示保单与保障责任核验完成',
+             'input': {'policy_id': claim.policy_id},
+             'output': {'policy': state['policy_info'], 'verification': state['verified']}},
+            *(
+                {'node': f'claim_{role}', 'status': 'done',
+                 'summary': f"建议 {opinions[role]['recommendation']} · 置信度 {opinions[role]['confidence']:.0%}",
+                 'input': {'role': role, 'claim_id': claim.claim_id}, 'output': opinions[role]}
+                for role in ('damage', 'risk', 'liability')
+            ),
+            {'node': 'claim_confidence', 'status': 'done',
+             'summary': f"三专家最低置信度 {state['confidence']:.0%}",
+             'input': {'method': 'min(expert_confidence)',
+                       'expert_scores': {role: opinions[role]['confidence'] for role in opinions}},
+             'output': {'confidence': state['confidence'], 'risk_score': state['risk_score']}},
+            {'node': 'claim_decision', 'status': 'done', 'summary': '规则校验通过，形成自动受理建议',
+             'input': {'amount': str(claim.amount),
+                       'coverage_verified': state['verified'].get('coverage_verified'),
+                       'confidence': state['confidence'], 'risk_score': state['risk_score']},
+             'output': {'decision': state['decision'], 'phase': state['phase']}},
+        ]
+        result = ClaimResponse(
+            claim_id=claim.claim_id, decision=state['decision'], phase=state['phase'],
+            confidence=state['confidence'], demo=True, message=state['message'],
+        )
+        return DemoClaimRunResponse(
+            claim=claim, documents=documents, result=result, trace=trace,
+        )
 
     @application.post('/api/claims/process', response_model=ClaimResponse, dependencies=[Depends(authenticate)])
     async def process_claim(request: ClaimRequest) -> ClaimResponse:

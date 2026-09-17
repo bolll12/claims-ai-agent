@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """密钥不写入代码，兼容已有.env但不隐式选择云服务。"""
     model_config = SettingsConfigDict(env_file=Path(__file__).parent / '.env', extra='ignore')
+    app_env: Literal['development', 'test', 'production'] = 'development'
     model_provider: Literal['local', 'bailian'] = 'local'
     business_mode: Literal['real', 'demo'] = 'real'
     local_llm_base_url: str = 'http://127.0.0.1:8000/v1'

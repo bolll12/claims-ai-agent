@@ -1,4 +1,4 @@
-const state = { documents: [], history: [], pendingFiles: [], busy: false };
+const state = { claimId: null, documents: [], history: [], pendingFiles: [], busy: false };
 const $ = (id) => document.getElementById(id);
 
 function toast(message) {
@@ -107,7 +107,7 @@ async function streamAnswer(question, newDocuments, article) {
   const response = await api("/api/assistant/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, documents: state.documents, history: state.history.slice(-12) }),
+    body: JSON.stringify({ question, claim_id: state.claimId, documents: state.documents, history: state.history.slice(-12) }),
   });
   answer.textContent = "";
   const reader = response.body.getReader();
@@ -187,7 +187,57 @@ async function sendMessage(rawQuestion) {
   }
 }
 
+async function runDemoClaim() {
+  if (state.busy) return;
+  state.busy = true;
+  $("newChat").disabled = true;
+  $("demoCase").disabled = true;
+  $("sendQuestion").disabled = true;
+  resetTrace();
+  $("traceStatus").textContent = "运行演示案件";
+  const article = addAssistantMessage();
+  try {
+    const response = await api("/api/demo/claims/process", { method: "POST" });
+    const data = await response.json();
+    state.claimId = data.claim.claim_id;
+    state.documents = data.documents;
+    state.history = [];
+    traceNode("input", "done", `合成案件 ${data.claim.claim_id}`);
+    setTraceParams("input", {source: "本地合成演示数据"}, data.claim);
+    traceNode("documents", "done", `${data.documents.length} 份合成单证`);
+    setTraceParams("documents", {source: "演示数据"}, {documents: data.documents});
+    traceNode("classification", "skipped", "演示案件直接进入正式理赔状态机");
+    setTraceParams("classification", {mode: "demo"}, {skipped: true});
+    updateTrace({node: "route", status: "done", selected: "claims", input: {mode: "demo"}, output: {selected: "claims"}});
+    traceNode("claims", "running", "正在运行合成理赔状态机");
+    data.trace.forEach(updateTrace);
+    const decision = {accept: "受理建议", review: "人工复核", reject: "不受理建议", investigate: "调查核实"}[data.result.decision] || data.result.decision;
+    traceNode("claims", "done", `演示决策：${decision}`);
+    setTraceParams("claims", data.claim, data.result);
+    traceNode("output", "done", "演示案件运行完成");
+    setTraceParams("output", data.result, {completed: true, demo: true});
+    $("traceStatus").textContent = "演示完成";
+    const confidence = data.result.confidence == null ? "" : `，置信度 ${Math.round(data.result.confidence * 100)}%`;
+    article.querySelector(".intent").hidden = false;
+    article.querySelector(".intent").textContent = "合成演示案件";
+    article.querySelector(".bubble p").textContent = `案件 ${data.result.claim_id}：${data.result.message} 决策 ${decision}${confidence}。`;
+    renderDocumentDetails(article.querySelector(".document-details"), data.documents);
+  } catch (error) {
+    article.classList.add("error");
+    article.querySelector(".bubble p").textContent = error.message;
+    traceNode("output", "error", error.message);
+    $("traceStatus").textContent = "演示失败";
+  } finally {
+    state.busy = false;
+    $("newChat").disabled = false;
+    $("demoCase").disabled = false;
+    $("sendQuestion").disabled = false;
+    scrollToBottom();
+  }
+}
+
 $("attachButton").addEventListener("click", () => $("fileInput").click());
+$("demoCase").addEventListener("click", runDemoClaim);
 $("fileInput").addEventListener("change", (event) => selectFiles(event.target.files));
 $("chatForm").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -211,6 +261,7 @@ $("question").addEventListener("keydown", (event) => {
 $("newChat").addEventListener("click", () => {
   if (state.busy) return;
   resetTrace();
+  state.claimId = null;
   state.documents = [];
   state.history = [];
   state.pendingFiles = [];

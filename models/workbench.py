@@ -1,8 +1,10 @@
 """理赔工作台的单证识别与问答契约。"""
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from models.schemas import ClaimRequest, ClaimResponse
 
 
 FieldName = Annotated[str, Field(min_length=1, max_length=50)]
@@ -62,3 +64,12 @@ class IntentResult(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     intent: IntentName
     confidence: float = Field(ge=0, le=1)
+
+
+class DemoClaimRunResponse(BaseModel):
+    """本地合成案件的一次完整状态机运行结果。"""
+
+    claim: ClaimRequest
+    documents: list[DocumentAnalysis]
+    result: ClaimResponse
+    trace: list[dict[str, Any]]

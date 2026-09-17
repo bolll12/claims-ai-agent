@@ -32,6 +32,10 @@ button { cursor: pointer; }
 .new-chat { height: 36px; padding: 0 13px; border: 1px solid var(--line); border-radius: 6px; color: #344039; background: white; font-size: 13px; }
 .new-chat:hover { border-color: var(--green); color: var(--green); }
 .new-chat span { margin-right: 5px; font-size: 17px; vertical-align: -1px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.demo-case { color: white; border-color: var(--green); background: var(--green); }
+.demo-case:hover { color: white; border-color: var(--green-dark); background: var(--green-dark); }
+.new-chat:disabled { cursor: wait; opacity: .55; }
 .chat-shell { min-height: 100%; display: flex; flex-direction: column; padding: 68px 20px 154px; }
 .messages { width: min(820px, 100%); margin: 0 auto; padding: 42px 0 54px; }
 .message { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 30px; }

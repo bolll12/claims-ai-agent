@@ -49,7 +49,27 @@ def test_workbench_page_and_assets() -> None:
         page = client.get('/')
         assert page.status_code == 200
         assert '理赔智能助手' in page.text
+        assert '演示案件' in page.text
         assert client.get('/static/styles.css').status_code == 200
+
+
+def test_mock_claim_runs_complete_demo_workflow() -> None:
+    model = FakeWorkbenchModel()
+    with TestClient(create_app(database=':memory:', assistant_model=model, intent_model=model)) as client:
+        response = client.post('/api/demo/claims/process')
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload['claim']['claim_id'] == 'CLM-DEMO-2026-001'
+        assert payload['claim']['policy_id'] == 'POL-2024-001'
+        assert payload['result']['decision'] == 'accept'
+        assert payload['result']['confidence'] == 0.95
+        assert payload['result']['demo'] is True
+        assert [event['node'] for event in payload['trace']] == [
+            'claim_intake', 'claim_documents', 'claim_policy',
+            'claim_damage', 'claim_risk', 'claim_liability',
+            'claim_confidence', 'claim_decision',
+        ]
+        assert all(event['status'] == 'done' for event in payload['trace'])
 
 
 def test_text_document_analysis_and_streaming_question() -> None:
