@@ -31,6 +31,7 @@ from tools.document_analysis import (
     DocumentValidationError,
     analyze_document,
 )
+from tools.material_check import check_claim_materials
 
 
 class HealthResponse(BaseModel):
@@ -194,6 +195,8 @@ def create_app(
             {'node': 'claim_documents', 'status': 'done', 'summary': '已核查 1 份合成单证',
              'input': {'documents': [item.model_dump() for item in documents]},
              'output': {'recognized_count': 1, 'average_extraction_confidence': 0.97, 'warning_count': 0}},
+            {'node': 'claim_followup', 'status': 'skipped', 'summary': '基础材料齐全，无需回流追问',
+             'input': {'round': 0}, 'output': {'complete': True}},
             {'node': 'claim_policy', 'status': 'done', 'summary': '演示保单与保障责任核验完成',
              'input': {'policy_id': claim.policy_id},
              'output': {'policy': state['policy_info'], 'verification': state['verified']}},
@@ -337,6 +340,7 @@ def create_app(
                         f'最近对话：{classification_context}\n'
                         f'当前问题：{mask_pii(body.question)}\n'
                         f'当前会话共有{len(body.documents)}份已识别单证。'
+                        f'当前处于第{body.material_round}轮材料补充状态；大于0时，关于材料、上传、缺失或无法补充的续答应继承补充材料意图。'
                     )),
                 ]
                 def model_inputs(model: Any, messages: list[Any]) -> dict[str, Any]:
@@ -355,7 +359,10 @@ def create_app(
                 intent = IntentResult.model_validate_json(raw_intent)
                 yield trace(stage, 'done', elapsed_ms=round((time.monotonic() - started) * 1000), intent=intent.intent, output=intent.model_dump())
                 yield f"data: {json.dumps({'intent': intent.intent, 'intent_confidence': intent.confidence}, ensure_ascii=False)}\n\n"
-                if intent.intent == '一般咨询':
+                material_continuation = body.material_round > 0 and any(
+                    token in body.question for token in ('材料', '补充', '上传', '缺少', '没有', '无法', '暂时', '继续')
+                )
+                if intent.intent == '一般咨询' and not material_continuation:
                     llm = general_model or ClaimLLMFactory.create(
                         'main', temperature=0.6, max_tokens=1500,
                         response_format='text', stop=(),
@@ -376,9 +383,13 @@ def create_app(
                         '涉及拒赔、责任比例、金额或法律判断时提示由授权人员依据有效条款复核。'
                         f'当前案件号：{mask_pii(body.claim_id or "未填写")}。已识别单证：{context}'
                     )
-                stage = 'general' if intent.intent == '一般咨询' else 'claims'
-                yield trace('route', 'done', selected=stage, input=intent.model_dump(), output={'selected': stage, 'model': getattr(llm, 'model_name', '测试模型')})
+                stage = 'general' if intent.intent == '一般咨询' and not material_continuation else 'claims'
+                yield trace('route', 'done', selected=stage,
+                            input=intent.model_dump() | {'material_continuation': material_continuation},
+                            output={'selected': stage, 'model': getattr(llm, 'model_name', '测试模型')})
                 if stage == 'claims':
+                    material_check = check_claim_materials(body.documents)
+                    should_check_materials = material_continuation or intent.intent in ('理赔报案', '材料审核', '补充材料')
                     extracted_fields = {
                         key.replace('_', '').replace(' ', '').lower(): value
                         for document in body.documents
@@ -434,9 +445,62 @@ def create_app(
                                 if document_confidences else None
                             ),
                             'warning_count': sum(len(document.warnings) for document in body.documents),
+                            'present_materials': list(material_check.present),
+                            'missing_materials': list(material_check.missing),
                             'reason': None if body.documents else '本轮没有可核查单证',
                         },
                     )
+                    if should_check_materials and not material_check.complete:
+                        material_round = min(body.material_round + 1, 3)
+                        exhausted = material_round >= 3
+                        follow_up = (
+                            f'已连续核查 {material_round} 轮，仍缺少：'
+                            f'{"、".join(material_check.missing)}。为避免反复提交，请转人工协助核实材料。'
+                            if exhausted else
+                            f'第 {material_round} 轮材料核查仍缺少：'
+                            f'{"、".join(material_check.missing)}。请继续上传，收到后我会重新核查。'
+                        )
+                        yield trace(
+                            'claims', 'running', summary='材料完整性门控',
+                            input={'intent': intent.intent, 'material_round': body.material_round},
+                        )
+                        yield trace(
+                            'claim_followup', 'done', summary=(
+                                '达到补充上限，建议转人工' if exhausted else f'回流追问 · 第 {material_round}/3 轮'
+                            ),
+                            input={
+                                'round': material_round,
+                                'present_materials': list(material_check.present),
+                                'missing_materials': list(material_check.missing),
+                            },
+                            output={'action': 'manual_review' if exhausted else 'request_more_documents',
+                                    'message': follow_up},
+                        )
+                        yield f"data: {json.dumps({'material_status': 'exhausted' if exhausted else 'incomplete', 'material_round': material_round, 'missing_materials': material_check.missing}, ensure_ascii=False)}\n\n"
+                        for waiting_node in (
+                            'claim_policy', 'claim_damage', 'claim_risk', 'claim_liability',
+                            'claim_confidence', 'claim_decision',
+                        ):
+                            yield trace(
+                                waiting_node, 'skipped', summary='等待补齐基础材料后再执行',
+                                output={'executed': False, 'reason': 'missing_materials'},
+                            )
+                        yield f"data: {json.dumps({'content': follow_up}, ensure_ascii=False)}\n\n"
+                        yield trace('claims', 'done', output={
+                            'content': follow_up,
+                            'material_status': 'exhausted' if exhausted else 'incomplete',
+                        })
+                        yield f"data: {json.dumps({'done': True})}\n\n"
+                        return
+                    yield trace(
+                        'claim_followup', 'skipped', summary=(
+                            '基础材料齐全，继续理赔分析' if should_check_materials else '当前意图无需材料门控'
+                        ),
+                        input={'intent': intent.intent, 'material_round': body.material_round},
+                        output={'complete': material_check.complete if should_check_materials else None},
+                    )
+                    if should_check_materials:
+                        yield f"data: {json.dumps({'material_status': 'complete', 'material_round': 0, 'missing_materials': []}, ensure_ascii=False)}\n\n"
                     deferred_nodes = (
                         ('claim_policy', {
                             'policy_id': observed_policy_id,

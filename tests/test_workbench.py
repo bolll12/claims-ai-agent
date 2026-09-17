@@ -68,11 +68,13 @@ def test_mock_claim_runs_complete_demo_workflow() -> None:
         assert payload['result']['confidence'] == 0.95
         assert payload['result']['demo'] is True
         assert [event['node'] for event in payload['trace']] == [
-            'claim_intake', 'claim_documents', 'claim_policy',
+            'claim_intake', 'claim_documents', 'claim_followup', 'claim_policy',
             'claim_damage', 'claim_risk', 'claim_liability',
             'claim_confidence', 'claim_decision',
         ]
-        assert all(event['status'] == 'done' for event in payload['trace'])
+        statuses = {event['node']: event['status'] for event in payload['trace']}
+        assert statuses['claim_followup'] == 'skipped'
+        assert all(status == 'done' for node, status in statuses.items() if node != 'claim_followup')
 
 
 def test_text_document_analysis_and_streaming_question() -> None:
@@ -96,7 +98,8 @@ def test_text_document_analysis_and_streaming_question() -> None:
             'documents': [document], 'history': [],
         })
         assert response.status_code == 200
-        assert '请补充' in response.text and '费用清单' in response.text
+        assert '第 1 轮材料核查仍缺少' in response.text
+        assert '保单信息' in response.text and '事故或出险证明' in response.text
         assert '材料审核' in response.text
         events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
         traces = [event['trace'] for event in events if 'trace' in event]
@@ -104,23 +107,24 @@ def test_text_document_analysis_and_streaming_question() -> None:
             ('classification', 'running'), ('classification', 'done'),
             ('route', 'done'),
             ('claim_intake', 'done'), ('claim_documents', 'done'),
+            ('claims', 'running'), ('claim_followup', 'done'),
             ('claim_policy', 'skipped'), ('claim_damage', 'skipped'),
             ('claim_risk', 'skipped'), ('claim_liability', 'skipped'),
             ('claim_confidence', 'skipped'), ('claim_decision', 'skipped'),
-            ('claims', 'running'), ('claims', 'done'),
+            ('claims', 'done'),
         ]
         assert traces[2]['selected'] == 'claims'
-        assert traces[-1]['elapsed_ms'] >= 0
         assert traces[0]['input']['messages'][-1]['role'] == 'human'
         assert traces[1]['output']['intent'] == '材料审核'
         assert traces[2]['output']['selected'] == 'claims'
         assert traces[3]['output']['check_type'] == '对话预审'
         assert traces[4]['output']['average_extraction_confidence'] == 0.96
-        assert traces[9]['input']['method'] == 'min(expert_confidence)'
-        assert traces[9]['output']['executed'] is False
-        assert traces[11]['input']['messages'][-1]['content'] == '还缺什么材料？'
-        assert traces[-1]['output']['content'] == '请补充费用清单。'
-        assert '保险理赔客服助手' in model.stream_system_prompts[-1]
+        assert traces[6]['input']['round'] == 1
+        assert traces[6]['output']['action'] == 'request_more_documents'
+        material_event = next(event for event in events if 'material_status' in event)
+        assert material_event['material_status'] == 'incomplete'
+        assert material_event['material_round'] == 1
+        assert not model.stream_system_prompts
         assert response.headers['content-type'].startswith('text/event-stream')
 
 
@@ -193,6 +197,70 @@ def test_follow_up_intent_receives_recent_history_and_previous_intent() -> None:
         assert '补充材料' in response.text
         assert '我发生交通事故' in model.classification_inputs[-1]
         assert '"intent": "理赔报案"' in model.classification_inputs[-1]
+        assert '第 1 轮材料核查仍缺少' in response.text
+        assert not model.stream_system_prompts
+
+
+def test_missing_materials_loop_three_rounds_then_manual_review() -> None:
+    model = FakeWorkbenchModel()
+    with TestClient(create_app(
+        database=':memory:', assistant_model=model, intent_model=model, general_model=model,
+    )) as client:
+        for current_round, expected_status in ((0, 'incomplete'), (1, 'incomplete'), (2, 'exhausted')):
+            response = client.post('/api/assistant/stream', json={
+                'question': '继续审核材料', 'documents': [], 'history': [],
+                'material_round': current_round,
+            })
+            events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+            status = next(event for event in events if 'material_status' in event)
+            assert status['material_round'] == current_round + 1
+            assert status['material_status'] == expected_status
+        assert '转人工协助核实材料' in response.text
+
+
+def test_active_material_reply_survives_general_classifier_result() -> None:
+    class GeneralClassifier(FakeWorkbenchModel):
+        async def ainvoke(self, messages: list[Any]) -> AIMessage:
+            if '意图分类器' in messages[0].content:
+                return AIMessage(content='{"intent":"一般咨询","confidence":0.51}')
+            return await super().ainvoke(messages)
+
+    model = GeneralClassifier()
+    with TestClient(create_app(
+        database=':memory:', assistant_model=model, intent_model=model, general_model=model,
+    )) as client:
+        response = client.post('/api/assistant/stream', json={
+            'question': '目前无法继续补充材料', 'documents': [], 'history': [],
+            'material_round': 2,
+        })
+        assert '转人工协助核实材料' in response.text
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+        route = next(event['trace'] for event in events if event.get('trace', {}).get('node') == 'route')
+        assert route['selected'] == 'claims'
+        assert route['input']['material_continuation'] is True
+
+
+def test_complete_materials_exit_loop_and_call_claims_model() -> None:
+    model = FakeWorkbenchModel()
+    complete_documents = [
+        {'document_id': 'DOC-1', 'file_name': '事故认定书.txt', 'document_type': '交通事故认定书',
+         'summary': '事故经过。', 'fields': {'事故经过': '车辆刮擦'}, 'confidence': 0.98, 'warnings': []},
+        {'document_id': 'DOC-2', 'file_name': '保单.pdf', 'document_type': '机动车保险保单',
+         'summary': '保单信息。', 'fields': {'保单号': 'POL-001'}, 'confidence': 0.99, 'warnings': []},
+        {'document_id': 'DOC-3', 'file_name': '维修报价单.pdf', 'document_type': '车辆维修报价单',
+         'summary': '维修费用。', 'fields': {'维修报价': '1286.40元'}, 'confidence': 0.97, 'warnings': []},
+    ]
+    with TestClient(create_app(
+        database=':memory:', assistant_model=model, intent_model=model, general_model=model,
+    )) as client:
+        response = client.post('/api/assistant/stream', json={
+            'question': '请审核完整材料', 'documents': complete_documents, 'history': [],
+            'material_round': 2,
+        })
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith('data: ')]
+        status = next(event for event in events if 'material_status' in event)
+        assert status == {'material_status': 'complete', 'material_round': 0, 'missing_materials': []}
+        assert '请补充费用清单。' in response.text
         assert '保险理赔客服助手' in model.stream_system_prompts[-1]
 
 

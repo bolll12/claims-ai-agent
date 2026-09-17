@@ -1,4 +1,7 @@
-const state = { claimId: null, documents: [], history: [], pendingFiles: [], busy: false, isDemo: false };
+const state = {
+  claimId: null, documents: [], history: [], pendingFiles: [], busy: false,
+  isDemo: false, materialRound: 0,
+};
 const $ = (id) => document.getElementById(id);
 
 function toast(message) {
@@ -94,6 +97,7 @@ function selectFiles(files) {
     state.documents = [];
     state.history = [];
     state.isDemo = false;
+    state.materialRound = 0;
     toast("已退出演示案件，将使用真实附件解析");
   }
   state.pendingFiles.push(...selected);
@@ -115,13 +119,17 @@ async function streamAnswer(question, newDocuments, article) {
   const response = await api("/api/assistant/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, claim_id: state.claimId, documents: state.documents, history: state.history.slice(-12) }),
+    body: JSON.stringify({
+      question, claim_id: state.claimId, documents: state.documents,
+      history: state.history.slice(-12), material_round: state.materialRound,
+    }),
   });
   answer.textContent = "";
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let detectedIntent = null;
+  let materialStatus = null;
   let completed = false;
   while (true) {
     const { value, done } = await reader.read();
@@ -134,7 +142,17 @@ async function streamAnswer(question, newDocuments, article) {
       if (!line) continue;
       const data = JSON.parse(line.slice(6));
       if (data.trace) updateTrace(data.trace);
-      if (data.done) { completed = true; traceNode("output", "done", "回答已完成"); $("traceStatus").textContent = "执行完成"; }
+      if (data.material_status) {
+        materialStatus = data.material_status;
+        state.materialRound = data.material_round;
+      }
+      if (data.done) {
+        completed = true;
+        traceNode("output", "done", materialStatus === "incomplete" ? "等待用户继续上传" : "回答已完成");
+        $("traceStatus").textContent = materialStatus === "incomplete"
+          ? `等待补充 · 第 ${state.materialRound}/3 轮`
+          : materialStatus === "exhausted" ? "建议转人工" : "执行完成";
+      }
       if (data.error) throw new Error(data.error);
       if (data.intent) {
         detectedIntent = data.intent;
@@ -211,6 +229,7 @@ async function runDemoClaim() {
     state.documents = data.documents;
     state.history = [];
     state.isDemo = true;
+    state.materialRound = 0;
     traceNode("input", "done", `合成案件 ${data.claim.claim_id}`);
     setTraceParams("input", {source: "本地合成演示数据"}, data.claim);
     traceNode("documents", "done", `${data.documents.length} 份合成单证`);
@@ -274,6 +293,7 @@ $("newChat").addEventListener("click", () => {
   state.documents = [];
   state.history = [];
   state.isDemo = false;
+  state.materialRound = 0;
   state.pendingFiles = [];
   renderPendingFiles();
   $("chatMessages").innerHTML = '<article class="message assistant"><div class="avatar" aria-hidden="true">理</div><div class="message-body"><div class="bubble"><p>新对话已开始。请描述你的问题或上传理赔单证。</p></div></div></article>';
@@ -283,12 +303,13 @@ document.querySelectorAll(".quick-actions button").forEach((button) => button.ad
 const traceNames = {
   input: "接收消息", documents: "附件识别", classification: "多轮意图识别",
   route: "选择回答链路", claims: "理赔智能体", general: "通用基模", output: "返回回答",
-  claim_intake: "报案信息核查", claim_documents: "理赔单证核查", claim_policy: "保单与责任核验",
+  claim_intake: "报案信息核查", claim_documents: "理赔单证核查", claim_followup: "补充材料追问",
+  claim_policy: "保单与责任核验",
   claim_damage: "损失专家", claim_risk: "风险专家", claim_liability: "责任专家",
   claim_confidence: "置信度计算", claim_decision: "审核决策路由",
 };
 const claimTraceNodes = [
-  "claim_intake", "claim_documents", "claim_policy", "claim_damage", "claim_risk",
+  "claim_intake", "claim_documents", "claim_followup", "claim_policy", "claim_damage", "claim_risk",
   "claim_liability", "claim_confidence", "claim_decision",
 ];
 function setTraceParams(id, input, output) {
@@ -319,7 +340,8 @@ function resetTrace() {
   const node = (id, extraClass = "") => `<div class="trace-node ${extraClass}" data-node="${id}"><div class="node-head"><strong>${traceNames[id]}</strong><span class="node-state">等待</span></div><small>等待本轮执行</small><details class="trace-params"><summary>输入 / 输出参数</summary><h3>输入</h3><pre data-param="input">尚未调用</pre><h3>输出</h3><pre data-param="output">尚无输出</pre></details></div>`;
   const arrow = '<div class="trace-arrow" aria-hidden="true">↓</div>';
   const expertRow = `<div class="trace-parallel"><span>并行分析</span><div class="trace-experts">${["claim_damage", "claim_risk", "claim_liability"].map(id => node(id, "compact")).join("")}</div></div>`;
-  const claimDetail = `<section id="claimTraceDetail" class="claim-trace-detail"><header><strong>理赔状态机明细</strong><span>对话预审 / 正式核赔节点</span></header>${node("claim_intake")}${arrow}${node("claim_documents")}${arrow}${node("claim_policy")}${arrow}${expertRow}${arrow}${node("claim_confidence")}${arrow}${node("claim_decision")}</section>`;
+  const loop = '<div class="trace-loop" aria-label="材料不足时回流补充">↶ 材料不足时回流上传并重新核查</div>';
+  const claimDetail = `<section id="claimTraceDetail" class="claim-trace-detail"><header><strong>理赔状态机明细</strong><span>对话预审 / 正式核赔节点</span></header>${node("claim_intake")}${arrow}${node("claim_documents")}${loop}${node("claim_followup")}${arrow}${node("claim_policy")}${arrow}${expertRow}${arrow}${node("claim_confidence")}${arrow}${node("claim_decision")}</section>`;
   $("traceGraph").innerHTML = ["input", "documents", "classification", "route"].map(node).join(arrow)
     + arrow + '<div class="trace-branches">' + node("claims") + node("general") + '</div>'
     + claimDetail + arrow + node("output");

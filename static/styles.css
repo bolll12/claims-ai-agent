@@ -131,6 +131,7 @@ button { cursor: pointer; }
 .claim-trace-detail > header strong { font-size: 13px; }
 .claim-trace-detail > header span { color: var(--muted); font-size: 10px; text-align: right; }
 .claim-trace-detail.inactive { opacity: .58; }
+.trace-loop { margin: 7px 0; padding: 6px 9px; border-left: 2px solid #7da590; color: #557064; background: #dfe9e3; font-size: 10px; }
 .trace-parallel { position: relative; padding-top: 18px; }
 .trace-parallel > span { position: absolute; top: 0; left: 50%; padding: 1px 7px; border-radius: 10px; color: #67746b; background: #dce5df; font-size: 10px; transform: translateX(-50%); }
 .trace-experts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
